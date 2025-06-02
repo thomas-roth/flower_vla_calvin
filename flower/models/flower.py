@@ -161,7 +161,18 @@ class FLOWERVLA(pl.LightningModule):
         print(f"Loading pretrained weights from {pretrained_model_path}...")
 
         # Load checkpoint
-        checkpoint = torch.load(pretrained_model_path, map_location=self.device)
+        if pretrained_model_path.endswith(".safetensors"):
+            from safetensors.torch import load_file
+            checkpoint = load_file(pretrained_model_path, device=str(self.device))
+        elif os.path.isdir(pretrained_model_path):
+            safetensor_files = [file for file in os.listdir(pretrained_model_path) if file.endswith('.safetensors')]
+            if safetensor_files:
+                from safetensors.torch import load_file
+                checkpoint = load_file(os.path.join(pretrained_model_path, safetensor_files[0]), device=str(self.device))
+            else:
+                checkpoint = torch.load(os.path.join(pretrained_model_path, 'pytorch_model.bin'), map_location=self.device)
+        else:
+            checkpoint = torch.load(pretrained_model_path, map_location=self.device)
 
         # Extract the state dict (handle PyTorch Lightning or plain models)
         state_dict = checkpoint.get("state_dict", checkpoint)
@@ -170,6 +181,7 @@ class FLOWERVLA(pl.LightningModule):
         new_state_dict = {}
         for key, value in state_dict.items():
             new_key = key.replace("agent.", "")  # Remove 'agent.' if it exists
+            new_key = new_key.replace("mlp.c_", "mlp.")  # Fix MLP keys
             new_state_dict[new_key] = value
 
         # Load the weights, allowing partial matches

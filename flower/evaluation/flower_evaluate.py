@@ -32,18 +32,15 @@ def get_video_tag(i):
 
 
 def get_log_dir(log_dir):
-    if log_dir is not None:
-        log_dir = Path(log_dir)
-        os.makedirs(log_dir, exist_ok=True)
-    else:
-        log_dir = Path(__file__).parents[3] / "evaluation"
-        if not log_dir.exists():
-            log_dir = Path("/tmp/evaluation")
+    if log_dir is None:
+        log_dir = Path(__file__).parents[2] / "outputs"
 
-    log_dir = log_dir / "logs" / time.strftime("%Y-%m-%d_%H-%M-%S")
-    os.makedirs(log_dir, exist_ok=False)
+    output_dirs = [os.path.join(log_dir, day, time) for day in os.listdir(log_dir) for time in os.listdir(Path(log_dir) / day)]
+    latest_output_dir = max(output_dirs)
+
     print(f"logging to {log_dir}")
-    return log_dir
+
+    return Path(latest_output_dir)
 
 
 def count_success(results):
@@ -65,7 +62,7 @@ def print_and_save(total_results, plan_dicts, cfg, log_dir=None):
     current_data = {}
     ranking = {}
     for checkpoint, results in total_results.items():
-        epoch = checkpoint.stem.split("=")[1]
+        epoch = checkpoint.stem.split("=")[1] if "=" in checkpoint.stem else "best"
         print(f"Results for Epoch {epoch}:")
         avg_seq_len = np.mean(results)
         ranking[epoch] = avg_seq_len
@@ -255,7 +252,7 @@ def main(cfg):
     if log_wandb:
         os.makedirs(log_dir / "wandb", exist_ok=False)
         run = wandb.init(
-            project='mode_calvin_eval',
+            project='attvis_flower_calvin_eval',
             entity=cfg.wandb_entity,
             # group=cfg.model_name + cfg.sampler_type + '_' + str(cfg.num_sampling_steps) + '_steps_' + str(cfg.num_sequences) + '_rollouts_',
             config=OmegaConf.to_object(cfg),
@@ -273,4 +270,8 @@ if __name__ == "__main__":
     os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "gloo"
     # Set CUDA device IDs
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+
+    # Add calvin env to path
+    sys.path.append(str(Path(__file__).absolute().parents[2] / "calvin_env"))
+
     main()

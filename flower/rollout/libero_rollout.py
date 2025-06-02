@@ -8,6 +8,7 @@ from time import time
 import gc
 
 
+import cv2
 import hydra
 from tqdm import tqdm
 from omegaconf import DictConfig, OmegaConf

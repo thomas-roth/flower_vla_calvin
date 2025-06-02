@@ -7,7 +7,7 @@ env_cfg:
   _target_: flower.wrappers.hulc_wrapper.HulcWrapper
 skip_epochs: ${rollout_lh_skip_epochs}
 rollout_freq: 5
-num_videos: 0
+num_videos: 10 #0
 num_sequences: 1000 # 128
 replan_freq: 30
 ep_len: 360

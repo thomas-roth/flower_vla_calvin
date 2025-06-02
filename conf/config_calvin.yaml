@@ -5,15 +5,15 @@ defaults:
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 
-root_data_dir: /hkfs/work/workspace/scratch/ft4740-play3/task_ABCD_D
+root_data_dir: /home/troth/data/task_D_D
 lang_folder: lang_clip_resnet50
 
 log_dir: ./logs
 slurm: false
 seed: 242
 device: 'cuda'
-batch_size: 8 
-devices: 4
+batch_size: 16 #8 
+devices: 2 #4
 act_dim: 7
 proprio_dims: 7
 obs_dim: 512
@@ -26,8 +26,8 @@ gen_img_res: 112
 max_epochs: 35
 rollout_lh_skip_epochs: 19
 num_workers: 12
-benchmark_name: calvin_d # calvin_abcd
-use_extracted_rel_actions: true
+benchmark_name: attvis_flower_calvin_d
+use_extracted_rel_actions: False
 
 trainer:
   devices: ${devices}
@@ -46,7 +46,7 @@ logger:
   group: mode
   log_model: false
   project: ${benchmark_name}
-  entity: bennoq
+  entity: thomas-roth-karlsruhe-institute-of-technology
   id: ???
 
 hydra:
