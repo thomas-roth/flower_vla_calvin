@@ -162,6 +162,8 @@ if __name__ == "__main__":
     os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512,expandable_segments:True'
     # Add repo to path
     sys.path.insert(0, str(Path(__file__).absolute().parents[1]))
+    # Add calvin env to path
+    sys.path.append(str(Path(__file__).absolute().parents[1] / "calvin_env"))
     
     try:
         train()
