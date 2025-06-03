@@ -3,7 +3,7 @@ _target_: flower.models.flower.FLOWERVLA
 _recursive_: false
 
 # VLM Configuration
-vlm_path: microsoft/Florence-2-large
+vlm_path: /home/troth/code/hiwi/flower_vla_calvin/pretrained/Florence-2-large #microsoft/Florence-2-large
 freeze_florence: False
 freeze_vision_tower: False
 vlm_prompt_style: default

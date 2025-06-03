@@ -113,10 +113,10 @@ class DiskDataset(BaseDataset):
         episode_lookup = []
 
         try:
-            print("trying to load lang data from: ", abs_datasets_dir / self.lang_folder / "auto_lang_ann.npy")
+            print("trying to load lang data from:", abs_datasets_dir / self.lang_folder / "auto_lang_ann.npy")
             lang_data = np.load(abs_datasets_dir / self.lang_folder / "auto_lang_ann.npy", allow_pickle=True).item()
         except Exception:
-            print("Exception, trying to load lang data from: ", abs_datasets_dir / "auto_lang_ann.npy")
+            print("Exception, trying to load lang data from:", abs_datasets_dir / "auto_lang_ann.npy")
             lang_data = np.load(abs_datasets_dir / "auto_lang_ann.npy", allow_pickle=True).item()
 
         ep_start_end_ids = lang_data["info"]["indx"]  # each of them are 64

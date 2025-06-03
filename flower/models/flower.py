@@ -243,9 +243,17 @@ class FLOWERVLA(pl.LightningModule):
 
     def _setup_vlm(self, vlm_path: str, freeze_vision_tower: bool, freeze_florence: bool):
         """Initialize and configure the Florence-2 VLM"""
-        print(f"Loading Florence-2 from {vlm_path}")
+
+        if not os.path.exists(vlm_path):
+            print(f"Loading Florence-2 remotely from {vlm_path}")
+            local_files_only = False
+        else:
+            print(f"Loading Florence-2 locally from {vlm_path}")
+            local_files_only = True
         
-        self.vlm = AutoModelForCausalLM.from_pretrained(vlm_path, trust_remote_code=True)
+        self.vlm = AutoModelForCausalLM.from_pretrained(vlm_path, trust_remote_code=True,
+                                                        local_files_only=local_files_only,
+                                                        use_safetensors=True)
         
         # Handle parameter freezing
         if freeze_florence:
@@ -256,7 +264,8 @@ class FLOWERVLA(pl.LightningModule):
                 param.requires_grad = True
 
         # Setup processor and tokenizer
-        self.processor = AutoProcessor.from_pretrained(vlm_path, trust_remote_code=True)
+        self.processor = AutoProcessor.from_pretrained(vlm_path, trust_remote_code=True,
+                                                       local_files_only=local_files_only)
         self.tokenizer = self.processor.tokenizer
         
         # Create prompt embedding
@@ -319,7 +328,7 @@ class FLOWERVLA(pl.LightningModule):
             input_dim = self.action_space_index.get_action_dim(action_idx)
             
             # Add encoder/decoder for this action
-            self.action_encoders[action_name] =  Mlp(in_features=input_dim, hidden_features=dit_dim, out_features=dit_dim, bias=True)
+            self.action_encoders[action_name] = Mlp(in_features=input_dim, hidden_features=dit_dim, out_features=dit_dim, bias=True)
             self.action_decoders[action_name] = nn.Linear(dit_dim, input_dim).to(self.device)
                 
             if self.action_type_adaln:
@@ -427,7 +436,7 @@ class FLOWERVLA(pl.LightningModule):
             noise_actions = torch.randn_like(target_actions, device=self.device)
 
             # Sample actions
-            action_pred = self.sample_actions(noise_actions, obs_features, inference=True)
+            action_pred, _ = self.sample_actions(noise_actions, obs_features, inference=True)
             
             # Compute validation loss
             val_loss = F.mse_loss(action_pred, target_actions)
@@ -473,7 +482,7 @@ class FLOWERVLA(pl.LightningModule):
         zt = (1 - texp) * actions + texp * z1
 
         # Forward pass
-        vtheta = self.dit_forward(zt, t, cond)
+        vtheta, _ = self.dit_forward(zt, t, cond)
         # Compute loss on valid dimensions only
         diff = (z1 - actions) - vtheta
         valid_diff = diff
@@ -501,15 +510,20 @@ class FLOWERVLA(pl.LightningModule):
         dt = 1.0 / steps
         dt_tensor = torch.tensor([dt] * b, device=device).view([b] + [1]*(z.dim()-1))
 
+        attns_step = []
+
         for i in range(steps, 0, -1):
             t_val = i / steps
             t_tensor = torch.full((b,), t_val, device=device)
 
             # Predict velocity field
-            vc = self.dit_forward(z, t_tensor, cond)
+            vc, attns_dec = self.dit_forward(z, t_tensor, cond)
             z = z - dt_tensor * vc
+            attns_step.append(attns_dec)
 
-        return z.clamp(-1, 1)
+        z = z.clamp(-1, 1)
+
+        return z, attns_step
 
     def dit_forward(self, z: torch.Tensor, t: torch.Tensor, cond_dict: dict) -> torch.Tensor:
         """
@@ -563,17 +577,25 @@ class FLOWERVLA(pl.LightningModule):
         
 
         # Process through DiT blocks
+        attns_dec = []
         for layer in self.dit:
-            cx = layer(
-                cx, 
-                global_cond, 
+            cx, attns_dec_layer = layer(
+                cx=cx, 
+                c=global_cond,
                 context=context, 
                 is_causal=True, 
                 global_adaln=global_adaln
             )
+            if len(attns_dec_layer) == 2:
+                # cross attn was used
+                attns_dec.append({"self": attns_dec_layer[0], "cross": attns_dec_layer[1]})
+            else:
+                attns_dec_layer = {"self": attns_dec_layer[0]}
             
-        # Decode and return
-        return self.decode_actions(cx, action_type, valid_dims)
+        # Decode actions
+        actions = self.decode_actions(cx, action_type, valid_dims)
+
+        return actions, attns_dec
 
     def encode_proprio(self, proprio: torch.Tensor, action_type: torch.Tensor, output_shape) -> torch.Tensor:
         """
@@ -684,7 +706,7 @@ class FLOWERVLA(pl.LightningModule):
             attention_mask=attention_mask
         ).last_hidden_state
 
-        # Apply dropout 
+        # Apply dropout
         features = self.vlm_token_dropout(features)
 
         # Prepare frequency and action space embeddings
@@ -701,7 +723,7 @@ class FLOWERVLA(pl.LightningModule):
             'features': features,
             'frequency_embeds': frequency_embeds,
             'action_space_embeds': None,
-            'action_type': torch.ones_like(action_type_tensor), # actiont ype is always 1
+            'action_type': torch.ones_like(action_type_tensor), # actiont type is always 1
             'proprio': proprio,
             'attention_mask': attention_mask,
         }
@@ -751,6 +773,7 @@ class FLOWERVLA(pl.LightningModule):
             
         Returns:
             Predicted action sequence
+            Attentions of action predictions
         """
         # batch = {'rgb_obs': obs, '"lang_text"': goal}
         rgb_static = obs["rgb_obs"]['rgb_static']
@@ -775,7 +798,9 @@ class FLOWERVLA(pl.LightningModule):
         )
         
         # Sample actions
-        return self.sample_actions(noise, features, inference=True)
+        actions, attns_step = self.sample_actions(noise, features, inference=True)
+
+        return actions, attns_step
 
     def step(self, obs: Dict, goal: Dict) -> torch.Tensor:
         """
@@ -786,10 +811,13 @@ class FLOWERVLA(pl.LightningModule):
             goal: Dictionary containing goal info
             
         Returns:
-            Current action prediction
+            current_action: Current action prediction
+            attns_step: Attentions of action predictions
         """
+
+        attns_step = None
         if self.rollout_step_counter % self.multistep == 0:
-            self.pred_action_seq = self(obs, goal)
+            self.pred_action_seq, attns_step = self(obs, goal)
         
         if not self.return_act_chunk:
             # Default: return current action
@@ -804,7 +832,7 @@ class FLOWERVLA(pl.LightningModule):
         if self.rollout_step_counter == self.multistep:
             self.rollout_step_counter = 0
         
-        return current_action
+        return current_action, attns_step
 
     def reset(self):
         """Reset model state for new rollout."""

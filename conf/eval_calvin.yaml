@@ -10,8 +10,8 @@ eval_cfg_overwrite:
   model:
     num_sampling_steps: ${num_sampling_steps}
 
-train_folder: /home/troth/code/hiwi/flower_vla_calvin/pretrained/flower_vla_pret
-checkpoint: /home/troth/code/hiwi/flower_vla_calvin/pretrained/flower_vla_pret/360000_model_weights.pt
+train_folder: /home/troth/code/hiwi/flower_vla_calvin/logs/runs/2025-06-02/18-24-10_seed242/.hydra/config.yaml
+checkpoint: /home/troth/code/hiwi/flower_vla_calvin/logs/runs/2025-06-02/18-24-10_seed242/seed_242/saved_models/epoch=19_eval_lh/model_cleaned.safetensors
 device: 0
 
 
@@ -27,3 +27,7 @@ num_sequences: 100
 ep_len: 360
 num_sampling_steps: 4
 multistep: 10
+
+visualize_attention: True
+merge_attn_heads: True
+num_attn_heatmaps: -1 # -1 for all heatmaps

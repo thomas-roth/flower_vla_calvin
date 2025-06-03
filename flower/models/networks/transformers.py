@@ -196,16 +196,28 @@ class FlowerAttention(nn.Module):
         else:
             mask = None
         # Use PyTorch's built-in scaled dot-product attention.
-        attn_output = F.scaled_dot_product_attention(
+        y = F.scaled_dot_product_attention(
             q, k, v,
             attn_mask=None if mask is None else ~mask,
             dropout_p=self.attn_dropout.p if self.training else 0.0,
             scale=self.scale,
             is_causal=is_causal if custom_attn_mask is None else False
         )
-        out = attn_output.transpose(1, 2).reshape(B, T, C)
+
+        v_eye = torch.eye(v.size(-2), device=v.device, dtype=v.dtype)
+        attn = F.scaled_dot_product_attention(
+            q, k, v_eye,
+            attn_mask=None,
+            dropout_p=self.attn_dropout.p if self.training else 0.0,
+            scale=self.scale,
+            is_causal=is_causal if custom_attn_mask is None else False
+        )
+        assert torch.allclose(attn @ v, y, atol=1e-6), "Flash attention output does not match manual attention computation"
+
+        out = y.transpose(1, 2).reshape(B, T, C)
         out = self.resid_dropout(self.proj(out))
-        return out
+
+        return out, attn
     
 
 class FlowerCrossAttention(nn.Module):
@@ -271,7 +283,8 @@ class FlowerCrossAttention(nn.Module):
             custom_attn_mask: Optional attention mask.
         
         Returns:
-            Tensor of shape [B, seq_len, dim].
+            out: Attention output of shape [B, seq_len, dim].
+            attn: Attention weights of shape [B, n_heads, seq_len, context_len].
         """
         B, T, C = x.size()
         _, S, _ = context.size()
@@ -283,27 +296,46 @@ class FlowerCrossAttention(nn.Module):
         if self.use_rope:
             q, _ = apply_rotary_pos_emb(q, q, self.q_cos, self.q_sin)
             k, _ = apply_rotary_pos_emb(k, k, self.k_cos, self.k_sin)
+
+        v_eye = torch.eye(v.size(-2), device=v.device)
         if custom_attn_mask is not None:
-            # First resh ape the mask to match q's sequence length
+            # First reshape the mask to match q's sequence length
             mask = custom_attn_mask.unsqueeze(1).unsqueeze(2)  # [32, 1, 1, 101]
             mask = mask.expand(-1, self.n_heads, q.size(2), -1)  # [32, 16, 10, 101]
-            attn_output = F.scaled_dot_product_attention(
+            y = F.scaled_dot_product_attention(
                 q, k, v,
                 attn_mask=mask,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
                 scale=self.scale,
                 is_causal=False
             )
+            attn = F.scaled_dot_product_attention(
+                q, k, v_eye,
+                attn_mask=mask,
+                dropout_p=self.attn_dropout.p if self.training else 0.0,
+                scale=self.scale,
+                is_causal=False
+            )
+            assert torch.allclose(attn @ v, y, atol=1e-6), "Flash attention output does not match manual attention computation"
         else:
-            attn_output = F.scaled_dot_product_attention(
+            y = F.scaled_dot_product_attention(
                 q, k, v,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
                 scale=self.scale,
                 is_causal=False
             )
-        out = attn_output.transpose(1, 2).reshape(B, T, C)
+            attn = F.scaled_dot_product_attention(
+                q, k, v_eye,
+                dropout_p=self.attn_dropout.p if self.training else 0.0,
+                scale=self.scale,
+                is_causal=False
+            )
+            assert torch.allclose(attn @ v, y, atol=1e-6), "Flash attention output does not match manual attention computation"
+        
+        out = y.transpose(1, 2).reshape(B, T, C)
         out = self.resid_dropout(self.proj(out))
-        return out
+
+        return out, attn
 
 ###############################################################################
 # Main FlowBlock
@@ -362,7 +394,9 @@ class FlowBlock(nn.Module):
             nn.Linear(lora_dim, 6 * dim)  # Up-project to produce 6 modulation signals
         )
 
-    def forward(self, cx: torch.Tensor, c: torch.Tensor,
+    def forward(self,
+                cx: torch.Tensor,
+                c: torch.Tensor,
                 context: Optional[torch.Tensor] = None,
                 custom_attn_mask: Optional[torch.Tensor] = None,
                 custom_cross_attn_mask: Optional[torch.Tensor] = None,
@@ -397,7 +431,7 @@ class FlowBlock(nn.Module):
         # Self-attention block with modulation.
         x_norm = self.norm1(cx)
         x_mod = modulate(x_norm, shift_msa, scale_msa)
-        x_self = self.self_attn(x_mod, custom_attn_mask=custom_attn_mask, is_causal=is_causal)
+        x_self, self_attn = self.self_attn(x_mod, custom_attn_mask=custom_attn_mask, is_causal=is_causal)
         x_out = residual + gate_msa.unsqueeze(1) * x_self
 
         # Optionally apply cross-attention.
@@ -405,7 +439,7 @@ class FlowBlock(nn.Module):
             if context is None:
                 raise ValueError("Context is required for cross-attention.")
             x_norm = self.norm2(x_out)
-            x_cross = self.cross_attn(x_norm, context, custom_attn_mask=custom_cross_attn_mask)
+            x_cross, cross_attn = self.cross_attn(x_norm, context, custom_attn_mask=custom_cross_attn_mask)
             x_out = x_out + x_cross
 
         # MLP block with modulation.
@@ -415,7 +449,10 @@ class FlowBlock(nn.Module):
         mlp_out = self.mlp(x_mod)
         x_final = x_out + gate_mlp.unsqueeze(1) * mlp_out
 
-        return x_final
+        if self.use_cross_attn:
+            return x_final, (self_attn, cross_attn)
+        else:
+            return x_final, (self_attn,)
 
 
 
