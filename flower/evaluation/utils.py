@@ -575,8 +575,14 @@ def draw_token_labels_onto_heatmap(heatmap, x_labels, y_labels):
 
 
 def store_heatmap(heatmap, output_path, sequence_number, step_number, layer, heatmap_name):
-    os.makedirs(f"{output_path}/seq-{sequence_number}/step-{step_number}/layer-{layer}/dec_self", exist_ok=True)
-    cv2.imwrite(f"{output_path}/seq-{sequence_number}/step-{step_number}/layer-{layer}/dec_self/{heatmap_name}.png", heatmap)
+    attn_type = "attn"
+    if "dec_self" in heatmap_name:
+        attn_type = "dec_self"
+    elif "dec_cross" in heatmap_name:
+        attn_type = "dec_cross"
+    
+    os.makedirs(f"{output_path}/seq-{sequence_number}/step-{step_number}/layer-{layer}/{attn_type}", exist_ok=True)
+    cv2.imwrite(f"{output_path}/seq-{sequence_number}/step-{step_number}/layer-{layer}/{attn_type}/{heatmap_name}.png", heatmap)
 
 
 def prepare_heatmaps_for_wandb(heatmap, img_name):
