@@ -20,7 +20,7 @@ from flower.utils.utils import add_text, format_sftp_path
 
 
 DEC_SELF_RESIZE_SHAPE = (250, 250)
-DEC_CROSS_RESIZE_SHAPE = (3325, 250) # preserves 10:133 aspect ratio (flipped bc of cv2)
+dec_cross_resize_shape = lambda num_context_tokens : (25 * num_context_tokens, 250) # number of context tokens varies bc of diff lengths of prompt, tuple flipped bc of cv2
 
 
 hasher = pyhash.fnv1_32()
@@ -440,8 +440,8 @@ def get_env_state_for_initial_condition(initial_condition):
 
 def gen_heatmaps(attns_sequences, output_dir, merge_attn_heads=True, num_heatmaps=-1): # -1 means all heatmaps
     input_tokens_dec_self = [f"action{i}" for i in range(10)]
-    input_tokens_dec_cross = [f"static-cam{i:02d}" for i in range(50)] + [f"gripper-cam{i:02d}" for i in range(50)] \
-        + ["task"] + [f"prompt{i:02d}" for i in range(32)]
+    input_tokens_dec_cross = lambda num_context_tokens : [f"static-cam{i:02d}" for i in range(50)] + [f"gripper-cam{i:02d}" for i in range(50)] \
+        + ["task"] + [f"prompt{i:02d}" for i in range(num_context_tokens - 101)]
 
     heatmaps = [defaultdict(lambda: defaultdict(list)) for _ in range(len(attns_sequences))]
 
@@ -463,16 +463,16 @@ def gen_heatmaps(attns_sequences, output_dir, merge_attn_heads=True, num_heatmap
                             continue
 
                         self_attns_dec = attns_dec["self"].cpu().detach().numpy() # (B, nh, Td, Td) = (1, 16, 10, 10)
-                        cross_attns_dec = attns_dec["cross"].cpu().detach().numpy() # (B, nh, Td, Ts) = (1, 16, 10, 133)
+                        cross_attns_dec = attns_dec["cross"].cpu().detach().numpy() # (B, nh, Td, Ts) = (1, 16, 10, 13_)
                         self_attns_dec = normalize_attns(self_attns_dec)
                         cross_attns_dec = normalize_attns(cross_attns_dec)
 
                         if merge_attn_heads:
                             self_attns_dec = self_attns_dec[0].mean(axis=0).astype(np.uint8) # (Td, Td) = (10, 10)
-                            cross_attns_dec = cross_attns_dec[0].mean(axis=0).astype(np.uint8) # (Td, Ts) = (10, 4)
+                            cross_attns_dec = cross_attns_dec[0].mean(axis=0).astype(np.uint8) # (Td, Ts) = (10, 13_)
 
                             self_attns_heatmap = plot_heatmap(self_attns_dec, DEC_SELF_RESIZE_SHAPE, input_tokens_dec_self, input_tokens_dec_self) # (H, W, C) = (250, 250, 3)
-                            cross_attns_heatmap = plot_heatmap(cross_attns_dec, DEC_CROSS_RESIZE_SHAPE, input_tokens_dec_cross, input_tokens_dec_self) # (H, W, C) = (100, 250, 3)
+                            cross_attns_heatmap = plot_heatmap(cross_attns_dec, dec_cross_resize_shape(cross_attns_dec.shape[-1]), input_tokens_dec_cross(cross_attns_dec.shape[-1]), input_tokens_dec_self) # (H, W, C) = (250, 13_, 3)
 
                             if num_heatmaps != 0:
                                 self_attns_heatmap_name = f"dec_self-attn_flow-step-{flow_step}_layer-{layer}_merged-heads"
@@ -489,12 +489,12 @@ def gen_heatmaps(attns_sequences, output_dir, merge_attn_heads=True, num_heatmap
 
                                 num_heatmaps -= 1
                         else:
-                            self_attns_dec = self_attns_dec[0].astype(np.uint8) # (nh, Td, Td) = (8, 10, 10)
-                            cross_attns_dec = cross_attns_dec[0].astype(np.uint8) # (nh, Td, Ts) = (8, 10, 4)
+                            self_attns_dec = self_attns_dec[0].astype(np.uint8) # (nh, Td, Td) = (16, 10, 10)
+                            cross_attns_dec = cross_attns_dec[0].astype(np.uint8) # (nh, Td, Ts) = (16, 10, 13_)
 
                             for head_number, (self_attns_dec_head, cross_attns_dec_head) in enumerate(zip(self_attns_dec, cross_attns_dec)):
                                 self_attns_heatmap = plot_heatmap(self_attns_dec_head, DEC_SELF_RESIZE_SHAPE, input_tokens_dec_self, input_tokens_dec_self) # (H, W, C) = (250, 250, 3)
-                                cross_attns_heatmap = plot_heatmap(cross_attns_dec_head, DEC_CROSS_RESIZE_SHAPE, input_tokens_dec_cross, input_tokens_dec_self) # (H, W, C) = (100, 250, 3)
+                                cross_attns_heatmap = plot_heatmap(cross_attns_dec_head, dec_cross_resize_shape(cross_attns_dec.shape[-1]), input_tokens_dec_cross(cross_attns_dec.shape[-1]), input_tokens_dec_self) # (H, W, C) = (250, 13_, 3)
 
                                 if num_heatmaps != 0:
                                     self_attns_heatmap_name = f"dec_self-attn_flow-step-{flow_step}_layer-{layer}_head-{head_number}"
@@ -545,6 +545,8 @@ def draw_token_labels_onto_heatmap(heatmap, x_labels, y_labels):
     x_cell_height = max(cv2.getTextSize(x_label, font_face, font_scale, thickness)[0][0] for x_label in x_labels) # dynamic depending on longest x label
     y_cell_width = max(cv2.getTextSize(y_label, font_face, font_scale, thickness)[0][0] for y_label in y_labels) # dynamic depending on longest y label
     margin_heatmap_labels = 5 # no. of pixels between heatmap and labels
+    x_labels_height = max(cv2.getTextSize(x_label, font_face, font_scale, thickness)[0][1] for x_label in x_labels) # dynamic depending on height of x labels
+    y_labels_height = max(cv2.getTextSize(y_label, font_face, font_scale, thickness)[0][1] for y_label in y_labels) # dynamic depending on height of y labels
     
     heatmap_height, heatmap_width = heatmap.shape[:2]
 
@@ -554,7 +556,7 @@ def draw_token_labels_onto_heatmap(heatmap, x_labels, y_labels):
     heatmap_canvas_rotated = cv2.rotate(heatmap_canvas, cv2.ROTATE_90_CLOCKWISE) # x labels are written rotated s.t. they fit onto canvas
 
     x_cell_width = round(heatmap_width / len(x_labels))
-    x_cell_middle = x_cell_width // 2 + 3
+    x_cell_middle = x_labels_height + (x_cell_width - x_labels_height) // 2 - 1
     for i, label in enumerate(x_labels):
         x = max(0, x_cell_height - cv2.getTextSize(label, font_face, font_scale, thickness)[0][0]) # right align text w/ overflow protection
         y = y_cell_width + margin_heatmap_labels + i * x_cell_width + x_cell_middle
@@ -563,7 +565,7 @@ def draw_token_labels_onto_heatmap(heatmap, x_labels, y_labels):
     heatmap_canvas = cv2.rotate(heatmap_canvas_rotated, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
     y_cell_height = round(heatmap_height / len(y_labels))
-    y_cell_middle = y_cell_height // 2 + 3
+    y_cell_middle = y_labels_height + (y_cell_height - y_labels_height) // 2 - 1
     for i, label in enumerate(y_labels):
         x = max(0, y_cell_width - cv2.getTextSize(label, font_face, font_scale, thickness)[0][0]) # right align text w/ overflow protection
         y = i * y_cell_height + y_cell_middle
