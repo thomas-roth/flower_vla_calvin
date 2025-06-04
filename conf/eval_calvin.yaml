@@ -11,7 +11,7 @@ eval_cfg_overwrite:
     num_sampling_steps: ${num_sampling_steps}
 
 train_folder: /home/troth/code/hiwi/flower_vla_calvin/logs/runs/2025-06-02/18-24-10_seed242/.hydra/config.yaml
-checkpoint: /home/troth/code/hiwi/flower_vla_calvin/logs/runs/2025-06-02/18-24-10_seed242/seed_242/saved_models/epoch=19_eval_lh/model_cleaned.safetensors
+checkpoint: /home/troth/code/hiwi/flower_vla_calvin/logs/runs/2025-06-02/18-24-10_seed242/seed_242/saved_models/epoch=19_eval_lh/avg_seq_len=4.46.ckpt
 device: 0
 
 
