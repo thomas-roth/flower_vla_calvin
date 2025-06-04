@@ -196,24 +196,24 @@ class FlowerAttention(nn.Module):
         else:
             mask = None
         # Use PyTorch's built-in scaled dot-product attention.
-        y = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=None if mask is None else ~mask,
-            dropout_p=self.attn_dropout.p if self.training else 0.0,
-            scale=self.scale,
-            is_causal=is_causal if custom_attn_mask is None else False
-        )
+        v_eye = torch.eye(v.size(-2), device=v.device, dtype=v.dtype).expand(v.size(0), v.size(1), -1, -1)
+        if is_causal:
+            attn = F.scaled_dot_product_attention(
+                q, k, v_eye,
+                dropout_p=self.attn_dropout.p if self.training else 0.0,
+                scale=self.scale,
+                is_causal=is_causal
+            )
+        else:
+            attn = F.scaled_dot_product_attention(
+                q, k, v_eye,
+                attn_mask=None if mask is None else ~mask,
+                dropout_p=self.attn_dropout.p if self.training else 0.0,
+                scale=self.scale,
+                is_causal=is_causal if custom_attn_mask is None else False
+            )
 
-        v_eye = torch.eye(v.size(-2), device=v.device, dtype=v.dtype)
-        attn = F.scaled_dot_product_attention(
-            q, k, v_eye,
-            attn_mask=None,
-            dropout_p=self.attn_dropout.p if self.training else 0.0,
-            scale=self.scale,
-            is_causal=is_causal if custom_attn_mask is None else False
-        )
-        assert torch.allclose(attn @ v, y, atol=1e-6), "Flash attention output does not match manual attention computation"
-
+        y = attn @ v
         out = y.transpose(1, 2).reshape(B, T, C)
         out = self.resid_dropout(self.proj(out))
 
@@ -297,18 +297,11 @@ class FlowerCrossAttention(nn.Module):
             q, _ = apply_rotary_pos_emb(q, q, self.q_cos, self.q_sin)
             k, _ = apply_rotary_pos_emb(k, k, self.k_cos, self.k_sin)
 
-        v_eye = torch.eye(v.size(-2), device=v.device)
+        v_eye = torch.eye(v.size(-2), device=v.device).expand(v.size(0), v.size(1), -1, -1)
         if custom_attn_mask is not None:
             # First reshape the mask to match q's sequence length
             mask = custom_attn_mask.unsqueeze(1).unsqueeze(2)  # [32, 1, 1, 101]
             mask = mask.expand(-1, self.n_heads, q.size(2), -1)  # [32, 16, 10, 101]
-            y = F.scaled_dot_product_attention(
-                q, k, v,
-                attn_mask=mask,
-                dropout_p=self.attn_dropout.p if self.training else 0.0,
-                scale=self.scale,
-                is_causal=False
-            )
             attn = F.scaled_dot_product_attention(
                 q, k, v_eye,
                 attn_mask=mask,
@@ -316,22 +309,15 @@ class FlowerCrossAttention(nn.Module):
                 scale=self.scale,
                 is_causal=False
             )
-            assert torch.allclose(attn @ v, y, atol=1e-6), "Flash attention output does not match manual attention computation"
         else:
-            y = F.scaled_dot_product_attention(
-                q, k, v,
-                dropout_p=self.attn_dropout.p if self.training else 0.0,
-                scale=self.scale,
-                is_causal=False
-            )
             attn = F.scaled_dot_product_attention(
                 q, k, v_eye,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
                 scale=self.scale,
                 is_causal=False
             )
-            assert torch.allclose(attn @ v, y, atol=1e-6), "Flash attention output does not match manual attention computation"
         
+        y = attn @ v
         out = y.transpose(1, 2).reshape(B, T, C)
         out = self.resid_dropout(self.proj(out))
 
