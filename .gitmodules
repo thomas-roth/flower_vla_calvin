@@ -6,4 +6,4 @@
 	url = https://github.com/Lifelong-Robot-Learning/LIBERO.git
 [submodule "Florence-2-large"]
 	path = Florence-2-large
-	url = https://huggingface.co/microsoft/Florence-2-large
+	url = https://github.com/thomas-roth/Florence-2-large.git
