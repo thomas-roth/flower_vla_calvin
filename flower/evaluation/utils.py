@@ -18,7 +18,8 @@ import wandb
 
 from flower.utils.utils import add_text, format_sftp_path
 
-
+ENC_IMAGE_RESIZE_SHAPE = (250, 250)
+enc_resize_shape = lambda num_context_tokens: (25 * num_context_tokens, 25 * num_context_tokens)
 DEC_SELF_RESIZE_SHAPE = (250, 250)
 dec_cross_resize_shape = lambda num_context_tokens : (25 * num_context_tokens, 250) # number of context tokens varies bc of diff lengths of prompt, tuple flipped bc of cv2
 
@@ -453,63 +454,37 @@ def gen_heatmaps(attns_sequences, output_dir, merge_attn_heads=True, num_heatmap
                 if attns_step is None:
                     continue # skip if step action already predicted in previous step (multistep prediction)
 
-                for flow_step_inv, attns_flow_step in enumerate(attns_step):
-                    flow_step = len(attns_step) - flow_step_inv - 1
+                attns_step_enc_image = attns_step["attns_enc_image"] # [{"img": (B, C, H, W), "attn": (B, nh, Ta, Ta)}] = [{"img": (1, 3, 224, 224), "attn": (1, 8, 32, 32)}]
+                attns_step_enc_image2 = attns_step["attns_enc_image2"] # None | [{"img": (B, C, H, W), "attn": (B, nh, Ta, Ta)}] = [{"img": (1, 3, 224, 224), "attn": (1, 8, 32, 32)}]
+                attns_step_enc = attns_step["attns_enc"] # [(B, nh, Tb, Tb)] = [(1, 16, 13_, 13_)]
+                attns_step_dec = attns_step["attns_dit_steps"] # [{"self": (B, nh, Tc, Tc), "cross": (B, nh, Tc, Tb)}] = [{"self": (1, 16, 10, 10), "cross": (1, 16, 10, 13_)}]
 
-                    attns_time_dec = attns_flow_step # no encoder in architecture
+                for flow_step_inv, attns_flow_step_enc_image in enumerate(attns_step_enc_image):
+                    flow_step = len(attns_step_enc_image) - flow_step_inv - 1
 
-                    for layer, attns_dec in enumerate(attns_time_dec):
-                        if "self" not in attns_dec:
-                            continue
+                    heatmaps, num_heatmaps = _gen_heatmaps_for_layers(attns_flow_step_enc_image, merge_attn_heads, num_heatmaps, output_dir, sequence_number, step_number,
+                                                                      subtask, heatmaps, attn_name="enc_image", flow_step=flow_step)
+                
+                if attns_step_enc_image2 is not None:
+                    for flow_step_inv, attns_flow_step_enc_image2 in enumerate(attns_step_enc_image2):
+                        flow_step = len(attns_step_enc_image2) - flow_step_inv - 1
 
-                        self_attns_dec = attns_dec["self"].cpu().detach().numpy() # (B, nh, Td, Td) = (1, 16, 10, 10)
-                        cross_attns_dec = attns_dec["cross"].cpu().detach().numpy() # (B, nh, Td, Ts) = (1, 16, 10, 13_)
-                        self_attns_dec = normalize_attns(self_attns_dec)
-                        cross_attns_dec = normalize_attns(cross_attns_dec)
+                        heatmaps, num_heatmaps = _gen_heatmaps_for_layers(attns_flow_step_enc_image2, merge_attn_heads, num_heatmaps, output_dir, sequence_number, step_number,
+                                                                          subtask, heatmaps, attn_name="enc_image2", flow_step=flow_step)
 
-                        if merge_attn_heads:
-                            self_attns_dec = self_attns_dec[0].mean(axis=0).astype(np.uint8) # (Td, Td) = (10, 10)
-                            cross_attns_dec = cross_attns_dec[0].mean(axis=0).astype(np.uint8) # (Td, Ts) = (10, 13_)
+                heatmaps, num_heatmaps = _gen_heatmaps_for_layers(attns_step_enc, merge_attn_heads, num_heatmaps, output_dir, sequence_number, step_number,
+                                                                  subtask, heatmaps, attn_name="enc", resize_shape=enc_resize_shape,
+                                                                  x_labels=input_tokens_dec_cross, y_labels=input_tokens_dec_cross) # TODO: replace with actual labels
+                
+                for flow_step_inv, attns_time_dec in enumerate(attns_step_dec):
+                    flow_step = len(attns_step_dec) - flow_step_inv - 1
 
-                            self_attns_heatmap = plot_heatmap(self_attns_dec, DEC_SELF_RESIZE_SHAPE, input_tokens_dec_self, input_tokens_dec_self) # (H, W, C) = (250, 250, 3)
-                            cross_attns_heatmap = plot_heatmap(cross_attns_dec, dec_cross_resize_shape(cross_attns_dec.shape[-1]), input_tokens_dec_cross(cross_attns_dec.shape[-1]), input_tokens_dec_self) # (H, W, C) = (250, 13_, 3)
-
-                            if num_heatmaps != 0:
-                                self_attns_heatmap_name = f"dec_self-attn_flow-step-{flow_step}_layer-{layer}_merged-heads"
-                                cross_attns_heatmap_name = f"dec_cross-attn_flow-step-{flow_step}_layer-{layer}_merged-heads"
-
-                                store_heatmap(self_attns_heatmap, output_dir, sequence_number, step_number, layer, self_attns_heatmap_name)
-                                store_heatmap(cross_attns_heatmap, output_dir, sequence_number, step_number, layer, cross_attns_heatmap_name)
-
-                                self_attns_heatmap_wandb = prepare_heatmaps_for_wandb(self_attns_heatmap, self_attns_heatmap_name)
-                                cross_attns_heatmap_wandb = prepare_heatmaps_for_wandb(cross_attns_heatmap, cross_attns_heatmap_name)
-
-                                heatmaps[sequence_number][subtask][step_number].append(self_attns_heatmap_wandb)
-                                heatmaps[sequence_number][subtask][step_number].append(cross_attns_heatmap_wandb)
-
-                                num_heatmaps -= 1
-                        else:
-                            self_attns_dec = self_attns_dec[0].astype(np.uint8) # (nh, Td, Td) = (16, 10, 10)
-                            cross_attns_dec = cross_attns_dec[0].astype(np.uint8) # (nh, Td, Ts) = (16, 10, 13_)
-
-                            for head_number, (self_attns_dec_head, cross_attns_dec_head) in enumerate(zip(self_attns_dec, cross_attns_dec)):
-                                self_attns_heatmap = plot_heatmap(self_attns_dec_head, DEC_SELF_RESIZE_SHAPE, input_tokens_dec_self, input_tokens_dec_self) # (H, W, C) = (250, 250, 3)
-                                cross_attns_heatmap = plot_heatmap(cross_attns_dec_head, dec_cross_resize_shape(cross_attns_dec.shape[-1]), input_tokens_dec_cross(cross_attns_dec.shape[-1]), input_tokens_dec_self) # (H, W, C) = (250, 13_, 3)
-
-                                if num_heatmaps != 0:
-                                    self_attns_heatmap_name = f"dec_self-attn_flow-step-{flow_step}_layer-{layer}_head-{head_number}"
-                                    cross_attns_heatmap_name = f"dec_cross-attn_flow-step-{flow_step}_layer-{layer}_head-{head_number}"
-
-                                    store_heatmap(self_attns_heatmap, output_dir, sequence_number, step_number, layer, self_attns_heatmap_name)
-                                    store_heatmap(cross_attns_heatmap, output_dir, sequence_number, step_number, layer, cross_attns_heatmap_name)
-
-                                    self_attns_heatmap_wandb = prepare_heatmaps_for_wandb(self_attns_heatmap, self_attns_heatmap_name)
-                                    cross_attns_heatmap_wandb = prepare_heatmaps_for_wandb(cross_attns_heatmap, cross_attns_heatmap_name)
-
-                                    heatmaps[sequence_number][subtask][step_number].append(self_attns_heatmap_wandb)
-                                    heatmaps[sequence_number][subtask][step_number].append(cross_attns_heatmap_wandb)
-
-                                    num_heatmaps -= 1
+                    heatmaps, num_heatmaps = _gen_heatmaps_for_layers(attns_time_dec, merge_attn_heads, num_heatmaps, output_dir, sequence_number, step_number,
+                                                                      subtask, heatmaps, attn_name="dec_self", resize_shape=DEC_SELF_RESIZE_SHAPE,
+                                                                      x_labels=input_tokens_dec_self, y_labels=input_tokens_dec_self, flow_step=flow_step)
+                    heatmaps, num_heatmaps = _gen_heatmaps_for_layers(attns_time_dec, merge_attn_heads, num_heatmaps, output_dir, sequence_number, step_number,
+                                                                      subtask, heatmaps, attn_name="dec_cross", resize_shape=dec_cross_resize_shape,
+                                                                      x_labels=input_tokens_dec_cross, y_labels=input_tokens_dec_self, flow_step=flow_step)
 
     for sequence_number, heatmaps_sequence in enumerate(heatmaps):
         num_zeros_heatmaps = 0 # short variant like for num_zeros_seqs doesnt work if num_attvis_heatmaps != -1 bc some subtasks might not have any heatmaps
@@ -524,20 +499,21 @@ def gen_heatmaps(attns_sequences, output_dir, merge_attn_heads=True, num_heatmap
     return heatmaps
 
 
-def normalize_attns(attns):
+def _normalize_tensor_to_255(attns):
     attns = (attns - attns.min()) / (attns.max() - attns.min())
     attns = 255 * attns
     return attns
 
 
-def plot_heatmap(attns, resize_shape, x_labels, y_labels):
+def _plot_heatmap(attns, resize_shape, x_labels=None, y_labels=None):
     heatmap = cv2.resize(attns, resize_shape, interpolation=cv2.INTER_NEAREST)
     heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-    heatmap = draw_token_labels_onto_heatmap(heatmap, x_labels, y_labels)
+    if x_labels is not None and y_labels is not None:
+        heatmap = _draw_token_labels_onto_heatmap(heatmap, x_labels, y_labels)
     return heatmap
 
 
-def draw_token_labels_onto_heatmap(heatmap, x_labels, y_labels):
+def _draw_token_labels_onto_heatmap(heatmap, x_labels, y_labels):
     font_face = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.5
     color = (0, 0, 0)
@@ -574,17 +550,111 @@ def draw_token_labels_onto_heatmap(heatmap, x_labels, y_labels):
     return heatmap_canvas
 
 
-def store_heatmap(heatmap, output_path, sequence_number, step_number, layer, heatmap_name):
-    attn_type = "attn"
+def _store_heatmap(heatmap, output_path, sequence_number, step_number, layer, heatmap_name):
+    attn_name = "attn"
     if "dec_self" in heatmap_name:
-        attn_type = "dec_self"
+        attn_name = "dec_self"
     elif "dec_cross" in heatmap_name:
-        attn_type = "dec_cross"
+        attn_name = "dec_cross"
+    elif "enc_image" in heatmap_name:
+        attn_name = "enc_image"
+    elif "enc_image2" in heatmap_name:
+        attn_name = "enc_image2"
+    elif "enc" in heatmap_name:
+        attn_name = "enc"
     
-    os.makedirs(f"{output_path}/seq-{sequence_number}/step-{step_number}/layer-{layer}/{attn_type}", exist_ok=True)
-    cv2.imwrite(f"{output_path}/seq-{sequence_number}/step-{step_number}/layer-{layer}/{attn_type}/{heatmap_name}.png", heatmap)
+    os.makedirs(f"{output_path}/seq-{sequence_number}/step-{step_number}/layer-{layer}/{attn_name}", exist_ok=True)
+    cv2.imwrite(f"{output_path}/seq-{sequence_number}/step-{step_number}/layer-{layer}/{attn_name}/{heatmap_name}.png", heatmap)
 
 
-def prepare_heatmaps_for_wandb(heatmap, img_name):
+def _prepare_heatmaps_for_wandb(heatmap, img_name):
     heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB) # wandb expects RGB images
     return wandb.Image(heatmap, caption=img_name)
+
+
+def _gen_heatmaps_for_layers(attns_layers, merge_attn_heads, num_heatmaps, output_dir, sequence_number, step_number, subtask, heatmaps, attn_name,
+                             resize_shape=None, x_labels=None, y_labels=None, flow_step=None):
+    if attn_name == "enc_image" or attn_name == "enc_image2":
+        assert resize_shape is None and x_labels is None and y_labels is None, "If enc_iamge or enc_image2 attention, resize_shape, x_labels and y_labels must be None."
+
+        img_layers = attns_layers["img"]
+        attns_layers = torch.unsqueeze(attns_layers["attn"], 0) # only one attn => add list dim
+
+        resize_shape = tuple(img_layers.shape[-2:]) # (H, W)
+    else:
+        assert resize_shape is not None and x_labels is not None and y_labels is not None, "If not enc_image or enc_image2 attention, resize_shape, x_labels and y_labels must not be None."
+
+    for layer, attns_layer in enumerate(attns_layers):
+        if attn_name == "dec_self":
+            attns_layer = attns_layer["self"]
+        elif attn_name == "dec_cross":
+            attns_layer = attns_layer["cross"]
+        
+        # specify labels and resize_shape for current attention layer
+        if attn_name == "dec_cross" and layer == 0:
+            x_labels = x_labels(attns_layer.shape[-1])
+            resize_shape = resize_shape(attns_layer.shape[-1])
+        elif attn_name == "enc" and layer == 0:
+            x_labels = x_labels(attns_layer.shape[-1])
+            y_labels = y_labels(attns_layer.shape[-1])
+            resize_shape = resize_shape(attns_layer.shape[-1])
+
+        attns_layer = attns_layer.cpu().detach().numpy()
+        attns_layer = _normalize_tensor_to_255(attns_layer)
+
+        if merge_attn_heads:
+            attns_layer = attns_layer[0].mean(axis=0).astype(np.uint8) # (Ta, Ta) | (Tb, Tb) | (Tc, Tc) | (Tc, Tb)
+            
+            attns_layer_heatmap = _plot_heatmap(attns_layer, resize_shape, x_labels, y_labels) # (H, W, C)
+            
+            if attn_name == "enc_image" or attn_name == "enc_image2":
+                attns_layer_heatmap = overlay_heatmap_onto_image(img_layers, attns_layer_heatmap)
+
+            if num_heatmaps != 0:
+                if flow_step is None:
+                    attns_layer_heatmap_name = f"{attn_name}_layer-{layer}_merged-heads"
+                else:
+                    attns_layer_heatmap_name = f"{attn_name}_flow-step-{flow_step}_layer-{layer}_merged-heads"
+                _store_heatmap(attns_layer_heatmap, output_dir, sequence_number, step_number, layer, attns_layer_heatmap_name)
+
+                attns_layer_heatmap_wandb = _prepare_heatmaps_for_wandb(attns_layer_heatmap, attns_layer_heatmap_name)
+                heatmaps[sequence_number][subtask][step_number].append(attns_layer_heatmap_wandb)
+
+                num_heatmaps -= 1
+        else:
+            attns_layer = attns_layer[0].astype(np.uint8) # (nh, Ts, Ts)
+
+            for head_number, attns_layer_head in enumerate(attns_layer):
+                attns_layer_heatmap = _plot_heatmap(attns_layer_head, resize_shape, x_labels, y_labels) # (H, W, C)
+                
+                if attn_name == "enc_image" or attn_name == "enc_image2":
+                    attns_layer_heatmap = overlay_heatmap_onto_image(img_layers, attns_layer_heatmap)
+                
+                if num_heatmaps != 0:
+                    if flow_step is None:
+                        attns_layer_heatmap_name = f"{attn_name}_layer-{layer}_head-{head_number}"
+                    else:
+                        attns_layer_heatmap_name = f"{attn_name}_flow-step-{flow_step}_layer-{layer}_head-{head_number}"
+                    _store_heatmap(attns_layer_heatmap, output_dir, sequence_number, step_number, layer, attns_layer_heatmap_name)
+
+                    attns_layer_heatmap_wandb = _prepare_heatmaps_for_wandb(attns_layer_heatmap, attns_layer_heatmap_name)
+                    heatmaps[sequence_number][subtask][step_number].append(attns_layer_heatmap_wandb)
+
+                    num_heatmaps -= 1
+    return heatmaps, num_heatmaps
+
+
+def overlay_heatmap_onto_image(image, heatmap, alpha=0.5):
+    if image.dim() == 4:
+        image = image.squeeze(0)
+    if image.dim() == 3 and image.shape[0] in [1,3]: # (C, H, W) -> (H, W, C)
+        image = image.permute(1, 2, 0) 
+    image = image.cpu().numpy()
+
+    if image.dtype != np.uint8:
+        image = _normalize_tensor_to_255(image).astype(np.uint8)
+        # TODO: check if untransform required instead
+
+    overlayed_image = cv2.addWeighted(image, 1 - alpha, heatmap, alpha, 0)
+
+    return overlayed_image

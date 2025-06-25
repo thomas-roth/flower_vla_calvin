@@ -314,6 +314,7 @@ if __name__ == "__main__":
     os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "gloo"
     # Set CUDA device IDs
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     # Add calvin env to path
     sys.path.append(str(Path(__file__).absolute().parents[2] / "calvin_env"))

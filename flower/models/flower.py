@@ -510,20 +510,20 @@ class FLOWERVLA(pl.LightningModule):
         dt = 1.0 / steps
         dt_tensor = torch.tensor([dt] * b, device=device).view([b] + [1]*(z.dim()-1))
 
-        attns_step = []
+        attns_dit_steps = []
 
         for i in range(steps, 0, -1):
             t_val = i / steps
             t_tensor = torch.full((b,), t_val, device=device)
 
             # Predict velocity field
-            vc, attns_dec = self.dit_forward(z, t_tensor, cond)
+            vc, attns_dit_step = self.dit_forward(z, t_tensor, cond)
             z = z - dt_tensor * vc
-            attns_step.append(attns_dec)
+            attns_dit_steps.append(attns_dit_step)
 
         z = z.clamp(-1, 1)
 
-        return z, attns_step
+        return z, attns_dit_steps
 
     def dit_forward(self, z: torch.Tensor, t: torch.Tensor, cond_dict: dict) -> torch.Tensor:
         """
@@ -668,17 +668,21 @@ class FLOWERVLA(pl.LightningModule):
         B, T, C, H, W = image_tensor.shape
         
         # Extract visual features
-        image_features = self.vlm._encode_image(
+        image_features, attns_enc_image = self.vlm._encode_image(
             image_tensor.view(-1, C, H, W).to(device).to(default_type)
-        ).to(default_type)
+        )
+        image_features = image_features.to(default_type)
+        attns_enc_image = [{"img": attn_enc_image["img"], "attn": attn_enc_image["attn"].to(default_type)} for attn_enc_image in attns_enc_image]
         image_features = image_features.view(B, T * image_features.shape[1], -1)
         
         # Process second view if enabled
         if self.use_second_view:
             image2_tensor = batch["rgb_obs"]['rgb_gripper']
-            image2_features = self.vlm._encode_image(
+            image2_features, attns_enc_image2 = self.vlm._encode_image(
                 image2_tensor.view(-1, C, H, W).to(device).to(default_type)
-            ).to(default_type)
+            )
+            image2_features = image2_features.to(default_type)
+            attns_enc_image2 = [{"img": attn_enc_image2["img"], "attn": attn_enc_image2["attn"].to(default_type)} for attn_enc_image2 in attns_enc_image2]
             image2_features = image2_features.view(B, T * image2_features.shape[1], -1)
             image_features = torch.cat([image_features, image2_features], dim=1)
         
@@ -701,10 +705,13 @@ class FLOWERVLA(pl.LightningModule):
         attention_mask = torch.ones(merged_embeds.shape[:2], device=merged_embeds.device)
         
         # Process through encoder
-        features = self.vlm.get_encoder()(
+        enc_result = self.vlm.get_encoder()(
             inputs_embeds=merged_embeds,
-            attention_mask=attention_mask
-        ).last_hidden_state
+            attention_mask=attention_mask,
+            output_attentions=True
+        )
+        features = enc_result.last_hidden_state
+        attns_enc = enc_result.attentions
 
         # Apply dropout
         features = self.vlm_token_dropout(features)
@@ -723,9 +730,12 @@ class FLOWERVLA(pl.LightningModule):
             'features': features,
             'frequency_embeds': frequency_embeds,
             'action_space_embeds': None,
-            'action_type': torch.ones_like(action_type_tensor), # actiont type is always 1
+            'action_type': torch.ones_like(action_type_tensor), # action type is always 1
             'proprio': proprio,
             'attention_mask': attention_mask,
+            'attns_enc_image': attns_enc_image,
+            'attns_enc_image2': attns_enc_image2 if self.use_second_view else None,
+            'attns_enc': attns_enc,
         }
 
     def encode_actions(self, z: torch.Tensor, action_type: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -798,9 +808,10 @@ class FLOWERVLA(pl.LightningModule):
         )
         
         # Sample actions
-        actions, attns_step = self.sample_actions(noise, features, inference=True)
+        actions, attns_dit_steps = self.sample_actions(noise, features, inference=True)
 
-        return actions, attns_step
+        return actions, {"attns_enc_image": features['attns_enc_image'], "attns_enc_image2": features['attns_enc_image2'], 
+                         "attns_enc": features['attns_enc'], "attns_dit_steps": attns_dit_steps}
 
     def step(self, obs: Dict, goal: Dict) -> torch.Tensor:
         """
