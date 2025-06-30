@@ -618,11 +618,16 @@ def _gen_heatmaps_for_layers(attns_layers, merge_attn_heads, num_heatmaps, outpu
             resize_shape = resize_shape(attns_layer.shape[-1])
 
         attns_layer = attns_layer.cpu().detach().numpy()
-        attns_layer = _normalize_tensor_to_255(attns_layer)
+        
+        # normalize each head individually to [0, 255] range
+        for head_number in range(attns_layer.shape[1]):
+            attns_head = attns_layer[0][head_number]
+            attns_layer[0][head_number] = _normalize_tensor_to_255(attns_head) # (Ta, Ta) | (Tb, Tb) | (Tc, Tc) | (Tc, Tb) | (Ts, Ts)
 
         if merge_attn_heads:
-            attns_layer = attns_layer[0].mean(axis=0).astype(np.uint8) # (Ta, Ta) | (Tb, Tb) | (Tc, Tc) | (Tc, Tb)
-            
+            attns_layer = attns_layer[0].sum(axis=0) # (Ta, Ta) | (Tb, Tb) | (Tc, Tc) | (Tc, Tb)
+            attns_layer = _normalize_tensor_to_255(attns_layer).astype(np.uint8) # normalize after sum to ensure [0, 255] range
+
             attns_layer_heatmap = _plot_heatmap(attns_layer, resize_shape, x_labels, y_labels, blur=(attn_name == "enc_image" or attn_name == "enc_image2")) # (H, W, C)
             
             if attn_name == "enc_image" or attn_name == "enc_image2":
@@ -666,7 +671,7 @@ def _gen_heatmaps_for_layers(attns_layers, merge_attn_heads, num_heatmaps, outpu
     return heatmaps, num_heatmaps
 
 
-def _overlay_heatmap_onto_image(image, heatmap, alpha=0.5):
+def _overlay_heatmap_onto_image(image, heatmap, alpha=0.3):
     if image.dim() == 4:
         image = image.squeeze(0)
     if image.dim() == 3 and image.shape[0] in [1,3]: # (C, H, W) -> (H, W, C)
