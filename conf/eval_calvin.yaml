@@ -23,7 +23,7 @@ debug: False
 log_wandb: True
 wandb_entity: thomas-roth-karlsruhe-institute-of-technology
 
-num_sequences: 100
+num_sequences: 1 #100
 ep_len: 360
 num_sampling_steps: 4
 multistep: 10
