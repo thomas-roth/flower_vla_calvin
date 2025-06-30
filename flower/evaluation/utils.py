@@ -440,6 +440,8 @@ def get_env_state_for_initial_condition(initial_condition):
 
 
 def gen_heatmaps(attns_sequences, output_dir, merge_attn_heads=True, num_heatmaps=-1): # -1 means all heatmaps
+    input_tokens_enc = lambda num_context_tokens: ["image1_spatial"] + [f"image1_temporal{i:02d}" for i in range(49)] + ["image2_spatial"] + [f"image2_temporal{i:02d}" for i in range(49)] \
+        + ["task"] + [f"prompt{i:02d}" for i in range(num_context_tokens - 101)]
     input_tokens_dec_self = [f"action{i}" for i in range(10)]
     input_tokens_dec_cross = lambda num_context_tokens : [f"static-cam{i:02d}" for i in range(50)] + [f"gripper-cam{i:02d}" for i in range(50)] \
         + ["task"] + [f"prompt{i:02d}" for i in range(num_context_tokens - 101)]
@@ -477,7 +479,7 @@ def gen_heatmaps(attns_sequences, output_dir, merge_attn_heads=True, num_heatmap
                 # gen heatmaps for encoder of VLM
                 heatmaps, num_heatmaps = _gen_heatmaps_for_layers(attns_step_enc, merge_attn_heads, num_heatmaps, output_dir, sequence_number, task_number,
                                                                   subtask, step_number, heatmaps, attn_name="enc", resize_shape=enc_resize_shape,
-                                                                  x_labels=input_tokens_dec_cross, y_labels=input_tokens_dec_cross) # TODO: replace with actual labels
+                                                                  x_labels=input_tokens_enc, y_labels=input_tokens_enc)
                 
                 # gen heatmaps for decoder of FLOWER
                 for flow_step_inv, attns_time_dec in enumerate(attns_step_dec):
@@ -510,11 +512,17 @@ def _normalize_tensor_to_255(attns):
     return attns
 
 
-def _plot_heatmap(attns, resize_shape, x_labels=None, y_labels=None):
-    heatmap = cv2.resize(attns, resize_shape, interpolation=cv2.INTER_NEAREST)
+def _plot_heatmap(attns, resize_shape, x_labels=None, y_labels=None, blur=False):
+    if blur:
+        heatmap = cv2.resize(attns, resize_shape)
+    else:
+        heatmap = cv2.resize(attns, resize_shape, interpolation=cv2.INTER_NEAREST)
+    
     heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    
     if x_labels is not None and y_labels is not None:
         heatmap = _draw_token_labels_onto_heatmap(heatmap, x_labels, y_labels)
+    
     return heatmap
 
 
@@ -615,10 +623,10 @@ def _gen_heatmaps_for_layers(attns_layers, merge_attn_heads, num_heatmaps, outpu
         if merge_attn_heads:
             attns_layer = attns_layer[0].mean(axis=0).astype(np.uint8) # (Ta, Ta) | (Tb, Tb) | (Tc, Tc) | (Tc, Tb)
             
-            attns_layer_heatmap = _plot_heatmap(attns_layer, resize_shape, x_labels, y_labels) # (H, W, C)
+            attns_layer_heatmap = _plot_heatmap(attns_layer, resize_shape, x_labels, y_labels, blur=(attn_name == "enc_image" or attn_name == "enc_image2")) # (H, W, C)
             
             if attn_name == "enc_image" or attn_name == "enc_image2":
-                attns_layer_heatmap = overlay_heatmap_onto_image(img_layers, attns_layer_heatmap)
+                attns_layer_heatmap = _overlay_heatmap_onto_image(img_layers, attns_layer_heatmap)
 
             if flow_step is None:
                 attns_layer_heatmap_name = f"{attn_name}_layer-{layer}_merged-heads"
@@ -639,10 +647,10 @@ def _gen_heatmaps_for_layers(attns_layers, merge_attn_heads, num_heatmaps, outpu
                     # if negative, all heatmaps are to be generated
                     break
 
-                attns_layer_heatmap = _plot_heatmap(attns_layer_head, resize_shape, x_labels, y_labels) # (H, W, C)
-                
+                attns_layer_heatmap = _plot_heatmap(attns_layer_head, resize_shape, x_labels, y_labels, blur=(attn_name == "enc_image" or attn_name == "enc_image2")) # (H, W, C)
+
                 if attn_name == "enc_image" or attn_name == "enc_image2":
-                    attns_layer_heatmap = overlay_heatmap_onto_image(img_layers, attns_layer_heatmap)
+                    attns_layer_heatmap = _overlay_heatmap_onto_image(img_layers, attns_layer_heatmap)
                 
                 if flow_step is None:
                     attns_layer_heatmap_name = f"{attn_name}_layer-{layer}_head-{head_number}"
@@ -658,7 +666,7 @@ def _gen_heatmaps_for_layers(attns_layers, merge_attn_heads, num_heatmaps, outpu
     return heatmaps, num_heatmaps
 
 
-def overlay_heatmap_onto_image(image, heatmap, alpha=0.5):
+def _overlay_heatmap_onto_image(image, heatmap, alpha=0.5):
     if image.dim() == 4:
         image = image.squeeze(0)
     if image.dim() == 3 and image.shape[0] in [1,3]: # (C, H, W) -> (H, W, C)
