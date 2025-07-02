@@ -161,18 +161,20 @@ class FLOWERVLA(pl.LightningModule):
         print(f"Loading pretrained weights from {pretrained_model_path}...")
 
         # Load checkpoint
-        if pretrained_model_path.endswith(".safetensors"):
+        if os.path.isdir(pretrained_model_path):
+            model_files = [file for file in os.listdir(pretrained_model_path) if file.endswith('.safetensors') or file.endswith('.bin') or file.endswith('.pt') or file.endswith('.ckpt')]
+            if any(file.endswith('.safetensors') for file in model_files):
+                # Prefer safetensors if available
+                pretrained_model_path = os.path.join(pretrained_model_path, next(file for file in model_files if file.endswith('.safetensors')))
+            else:
+                # Fallback to pytorch_model.bin or any other file
+                pretrained_model_path = os.path.join(pretrained_model_path, model_files[0])
+        elif pretrained_model_path.endswith(".safetensors"):
             from safetensors.torch import load_file
             checkpoint = load_file(pretrained_model_path, device=str(self.device))
-        elif os.path.isdir(pretrained_model_path):
-            safetensor_files = [file for file in os.listdir(pretrained_model_path) if file.endswith('.safetensors')]
-            if safetensor_files:
-                from safetensors.torch import load_file
-                checkpoint = load_file(os.path.join(pretrained_model_path, safetensor_files[0]), device=str(self.device))
-            else:
-                checkpoint = torch.load(os.path.join(pretrained_model_path, 'pytorch_model.bin'), map_location=self.device)
         else:
-            checkpoint = torch.load(pretrained_model_path, map_location=self.device)
+            checkpoint = torch.load(pretrained_model_path, map_location=self.device, weights_only=False)
+
 
         # Extract the state dict (handle PyTorch Lightning or plain models)
         state_dict = checkpoint.get("state_dict", checkpoint)

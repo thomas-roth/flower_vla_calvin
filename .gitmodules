@@ -4,3 +4,7 @@
 [submodule "LIBERO"]
 	path = LIBERO
 	url = https://github.com/Lifelong-Robot-Learning/LIBERO.git
+[submodule "Florence-2-large"]
+	path = Florence-2-large
+	url = https://github.com/thomas-roth/Florence-2-large.git
+	branch = itrap
