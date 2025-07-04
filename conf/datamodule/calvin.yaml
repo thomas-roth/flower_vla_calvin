@@ -33,7 +33,7 @@ datasets:
      #subset_percentage: 0.1
     # subset_seed: ${seed}
     key: "vis_lang"
-    save_format: "npz"
+    save_format: "tfrecord"
     batch_size: ${batch_size}
     min_window_size: ${act_seq_len}
     max_window_size: ${act_seq_len}

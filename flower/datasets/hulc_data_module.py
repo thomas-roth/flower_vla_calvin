@@ -54,7 +54,7 @@ class HulcDataModule(pl.LightningDataModule):
 
     def prepare_data(self, *args, **kwargs):
         # check if files already exist
-        dataset_exist = np.any([len(list(self.training_dir.glob(extension))) for extension in ["*.npz", "*.pkl"]])
+        dataset_exist = np.any([len(list(self.training_dir.glob(extension))) for extension in ["*.npz", "*.pkl", "*.tfrecord*"]])
 
         # download and unpack images
         if not dataset_exist:

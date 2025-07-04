@@ -10,6 +10,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import concurrent.futures
 import numpy as np
+import tensorflow_datasets as tfds
 
 from flower.datasets.base_dataset import BaseDataset
 from flower.datasets.utils.episode_utils import lookup_naming_pattern
@@ -26,13 +27,23 @@ def load_npz(filename: Path) -> Dict[str, np.ndarray]:
     return np.load(filename.as_posix())
 
 
+def load_tfrecord(filename: Path) -> Dict[str, np.ndarray]:
+    # TODO: either pre-load whole dataset at start & query it on method call, or load dataset on method call & filter for episode
+    builder = tfds.builder_from_directory(filename)
+    dataset = builder.as_dataset()
+    dataset_steps = dataset.flat_map(lambda episode: episode["steps"])
+    dataset_steps_np = tfds.as_numpy(dataset_steps)
+    episode = next(iter(dataset_steps_np))
+    return episode
+
+
 class DiskDataset(BaseDataset):
     """
     Dataset that loads episodes as individual files from disk.
 
     Args:
         skip_frames: Skip this amount of windows for vision-language dataset.
-        save_format: File format in datasets_dir (pkl or npz).
+        save_format: File format in datasets_dir (pkl, npz or tfrecord).
         pretrain: Set to True when pretraining.
     """
 
@@ -50,6 +61,8 @@ class DiskDataset(BaseDataset):
             self.load_file = load_pkl
         elif self.save_format == "npz":
             self.load_file = load_npz
+        elif self.save_format == "tfrecord":
+            self.load_file = load_tfrecord
         else:
             raise NotImplementedError
         self.pretrain = pretrain
