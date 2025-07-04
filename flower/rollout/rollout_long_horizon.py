@@ -3,6 +3,8 @@ from itertools import chain
 import logging
 import multiprocessing
 import os
+from pathlib import Path
+import sys
 from typing import Any
 
 import hydra
@@ -13,6 +15,8 @@ import torch
 import torch.distributed as dist
 from tqdm import tqdm
 
+sys.path.append(str(Path(__file__).absolute().parents[5]))
+from iTRAP.evaluation.utils import setup_vlm_client, query_vlm, extract_gripper_points_and_actions, draw_trajectory_onto_image, save_trajectory_image
 from flower.evaluation.multistep_sequences import get_sequences
 from flower.evaluation.utils import get_env_state_for_initial_condition, join_vis_lang, LangEmbeddings
 from flower.rollout.rollout_video import RolloutVideo
@@ -89,12 +93,6 @@ def gather_results(local_results):
     return list(chain(*results))
 
 
-def get_video_tag(i):
-    if dist.is_available() and dist.is_initialized():
-        i = i * dist.get_world_size() + dist.get_rank()
-    return f"_long_horizon/sequence_{i}"
-
-
 class RolloutLongHorizon(Callback):
     """
     A class for performing rollouts during validation step.
@@ -112,10 +110,11 @@ class RolloutLongHorizon(Callback):
         tasks,
         log_video_to_file,
         save_dir,
-        lang_folder,
+        vis_lang_folder,
         empty_cache,
         val_annotations,
         debug,
+        traj_stretch_factor=1.0
     ):
         super().__init__()
         self.env = None  # type: Any
@@ -133,10 +132,17 @@ class RolloutLongHorizon(Callback):
         self.empty_cache = empty_cache
         self.device = None  # type: Any
         self.lang_embeddings = None
-        self.lang_folder = lang_folder
+        self.vis_lang_folder = vis_lang_folder
         self.eval_sequences = None
         self.val_annotations = val_annotations
         self.debug = debug
+        self.traj_stretch_factor = traj_stretch_factor
+
+        complete_calvin_cfg = hydra.compose(config_name="config_calvin")
+        val_transforms_cfg = complete_calvin_cfg.datamodule.transforms.val.rgb_static
+        self.val_transforms = []
+        for val_transform_cfg in val_transforms_cfg:
+            self.val_transforms.append(hydra.utils.instantiate(val_transform_cfg))
 
     def on_validation_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Called when the validation loop begins."""
@@ -149,8 +155,8 @@ class RolloutLongHorizon(Callback):
                 
                 # Handle the dict structure
                 if isinstance(val_dataloaders, dict):
-                    # Try to get 'lang' dataloader first, fallback to first available dataloader
-                    dataloader = val_dataloaders.get('lang', next(iter(val_dataloaders.values())))
+                    # Try to get 'vis_lang' dataloader first, fallback to first available dataloader
+                    dataloader = val_dataloaders.get('vis_lang', next(iter(val_dataloaders.values())))
                 elif isinstance(val_dataloaders, list):
                     dataloader = val_dataloaders[0]
                 else:
@@ -186,7 +192,7 @@ class RolloutLongHorizon(Callback):
                 # Initialize language embeddings with the dataset
                 self.lang_embeddings = LangEmbeddings(
                     dataset.abs_datasets_dir, 
-                    dataset.lang_folder, 
+                    dataset.vis_lang_folder, 
                     device=pl_module.device
                 )
 
@@ -245,66 +251,111 @@ class RolloutLongHorizon(Callback):
         )
 
     def evaluate_policy(self, model):
+        vlm_client = setup_vlm_client()
+
         results = []
         total_evaluations = len(self.eval_sequences)
         local_rank = int(dist.get_rank()) if (dist.is_available() and dist.is_initialized()) else 0
-        for i, (initial_state, eval_sequence) in enumerate(
-                tqdm(self.eval_sequences,
-                     desc=f"Evaluating Policy(rank={local_rank})",
+        for seq_nr, (initial_state, eval_sequence) in enumerate(tqdm(self.eval_sequences, desc=f"Evaluating Policy (rank={local_rank})",
                      total=total_evaluations, position=local_rank)):
-            record = i < self.num_videos
-            result = self.evaluate_sequence(model, initial_state, eval_sequence, record, i)
+            record = seq_nr < self.num_videos
+            result = self.evaluate_sequence(vlm_client, model, initial_state, eval_sequence, seq_nr, record)
             results.append(result)
             if record:
-                self.rollout_video.write_to_tmp()
+                global_step = 504 * model.current_epoch # 504 steps per epoch with current setup
+                self.rollout_video.log(global_step)
         return results
 
-    def evaluate_sequence(self, model, initial_state, eval_sequence, record, i):
+    def evaluate_sequence(self, vlm_client, model, initial_state, eval_sequence, seq_nr, record):
         robot_obs, scene_obs = get_env_state_for_initial_condition(initial_state)
         self.env.reset(robot_obs=robot_obs, scene_obs=scene_obs)
+        
         if record:
             caption = " | ".join(eval_sequence)
-            self.rollout_video.new_video(tag=get_video_tag(i), caption=caption)
-        success_counter = 0
+            self.rollout_video.new_video(tag=self.get_video_tag(seq_nr), caption=caption)
+        
         if self.debug:
             print()
             print()
             print(f"Evaluating sequence: {' -> '.join(eval_sequence)}")
             print("Subtask: ", end="")
-        for subtask in eval_sequence:
+        
+        success_counter = 0
+
+        for subtask_nr, subtask in enumerate(eval_sequence):
             if record:
                 self.rollout_video.new_subtask()
-            success = self.rollout(model, subtask, record)
+            
+            success = self.rollout(vlm_client, model, subtask, seq_nr, subtask_nr, record)
+
             if record:
                 self.rollout_video.draw_outcome(success)
+            
             if success:
                 success_counter += 1
             else:
                 return success_counter
+
         return success_counter
 
-    def rollout(self, model, subtask, record):
+    def rollout(self, vlm_client, model, subtask, seq_nr, subtask_nr, record):
         if self.debug:
             print(f"{subtask} ", end="")
-        obs = self.env.get_obs()
-        # get lang annotation for subtask
-        lang_annotation = self.val_annotations[subtask][0]
-        # get language goal embedding
-        goal = self.lang_embeddings.get_lang_goal(lang_annotation)
-        goal['lang_text'] = lang_annotation
+        obs = self.env.get_obs()    
+
+        # Get lang goal embedding & annotation text for subtask
+        goal = self.lang_embeddings.get_lang_goal(subtask)
+        goal["lang_text"] = self.val_annotations[subtask][0]
+
+        # get trajectory points & actions from initial state of scene & robot (static camera image untransformed as render() used instead of get_obs())
+        untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
+        vlm_response = query_vlm(untransformed_static_img, vlm_client, subtask)
+        traj_gripper_points, traj_gripper_actions = extract_gripper_points_and_actions(vlm_response, error_logger=log_print, stretch_factor=self.traj_stretch_factor)
+
         model.reset()
         start_info = self.env.get_info()
+
+        if record:
+            # update video with initial state
+            static_img = self.env.cameras[0].render()[0].squeeze()
+            static_traj_img = draw_trajectory_onto_image(static_img, traj_gripper_points, traj_gripper_actions)
+            normalized_static_traj_img = static_traj_img / 127.5 - 1 # normalize to [-1, 1]
+            self.rollout_video.update(torch.tensor(normalized_static_traj_img).permute(2, 0, 1).unsqueeze(0).unsqueeze(1).to(self.device))
+        
+        local_rank = int(dist.get_rank()) if (dist.is_available() and dist.is_initialized()) else 0
+
         success = False
-        for step in range(self.ep_len):
+        for step in tqdm(range(self.ep_len), total=self.ep_len, desc=f"Rolling out policy for {subtask} (rank={local_rank})", leave=False):
+            if step == self.ep_len / 2:
+                # query_vlm again to help robot out of possibly wrong state
+                untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
+                vlm_response = query_vlm(untransformed_static_img, vlm_client, subtask)
+                traj_gripper_points, traj_gripper_actions = extract_gripper_points_and_actions(vlm_response, error_logger=log_print, stretch_factor=self.traj_stretch_factor)
+            
+            if step % model.multistep == 0:
+                # model predicts multistep actions per step => only draw trajectory once per multistep
+                untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
+                untransformed_static_traj_img = draw_trajectory_onto_image(untransformed_static_img, traj_gripper_points, traj_gripper_actions)
+                #save_trajectory_image(untransformed_static_traj_img, subtask, local_rank, seq_nr, subtask_nr, step)
+
+                # apply transforms to trajectory image
+                transformed_static_traj_img = torch.tensor(untransformed_static_traj_img).permute(2, 0, 1).unsqueeze(0)
+                for val_transform in self.val_transforms:
+                    transformed_static_traj_img = val_transform(transformed_static_traj_img)
+                obs["rgb_obs"]["rgb_static"] = transformed_static_traj_img.unsqueeze(0).to(self.device)
+
             action = model.step(obs, goal)
             # print(action.shape)
             obs, _, _, current_info = self.env.step(action)
             if self.debug and os.environ.get("DISPLAY") is not None:
                 img = self.env.render(mode="rgb_array")
-                join_vis_lang(img, lang_annotation)
+                join_vis_lang(img, goal["lang_text"])
             if record:
                 # update video
-                self.rollout_video.update(obs["rgb_obs"]["rgb_static"])
+                static_img = self.env.cameras[0].render()[0].squeeze()
+                static_traj_img = draw_trajectory_onto_image(static_img, traj_gripper_points, traj_gripper_actions)
+                normalized_static_traj_img = static_traj_img / 127.5 - 1 # normalize to [-1, 1]
+                self.rollout_video.update(torch.tensor(normalized_static_traj_img).permute(2, 0, 1).unsqueeze(0).unsqueeze(1).to(self.device))
             # check if current step solves a task
             current_task_info = self.task_checker.get_task_info_for_set(start_info, current_info, {subtask})
             if len(current_task_info) > 0:
@@ -316,5 +367,5 @@ class RolloutLongHorizon(Callback):
             else:
                 print(colored("fail", "red"), end=" ")
         if record:
-            self.rollout_video.add_language_instruction(lang_annotation)
+            self.rollout_video.add_language_instruction(goal["lang_text"])
         return success

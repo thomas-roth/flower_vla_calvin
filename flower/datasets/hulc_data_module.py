@@ -44,9 +44,9 @@ class HulcDataModule(pl.LightningDataModule):
         self.modalities: List[str] = []
         self.transforms = transforms
 
-        if 'lang_dataset' in self.datasets_cfg: 
-            if "shm_dataset" in self.datasets_cfg.lang_dataset._target_:
-                self.use_shm = "shm_dataset" in self.datasets_cfg.lang_dataset._target_
+        if 'vis_lang_dataset' in self.datasets_cfg: 
+            if "shm_dataset" in self.datasets_cfg.vis_lang_dataset._target_:
+                self.use_shm = "shm_dataset" in self.datasets_cfg.vis_lang_dataset._target_
             else:
                 self.use_shm = False
         else:
@@ -93,6 +93,16 @@ class HulcDataModule(pl.LightningDataModule):
                     instantiated_transform = hydra.utils.instantiate(transform)
                 cam_transforms.append(instantiated_transform)
             self.train_transforms[cam] = cam_transforms
+
+        self.val_transforms = {}
+        for cam in transforms.val:
+            for transform in transforms.val[cam]:
+                if transform._target_ == "lfp.utils.transforms.NormalizeVector":
+                    transform._target_ = "flower.utils.transforms.NormalizeVector"
+                if cam in self.val_transforms:
+                    self.val_transforms[cam].append(hydra.utils.instantiate(transform))
+                else:
+                    self.val_transforms[cam] = [hydra.utils.instantiate(transform)]
 
         self.val_transforms = {
             cam: [hydra.utils.instantiate(transform) for transform in transforms.val[cam]] for cam in transforms.val

@@ -63,7 +63,7 @@ def print_and_save(total_results, plan_dicts, cfg, log_dir=None):
     ranking = {}
     for checkpoint, results in total_results.items():
         epoch = checkpoint.stem.split("=")[1] if "=" in checkpoint.stem else "best"
-        print(f"Results for Epoch {epoch}:")
+        print(f"\nResults for Epoch {epoch}:")
         avg_seq_len = np.mean(results)
         ranking[epoch] = avg_seq_len
         chain_sr = {i + 1: sr for i, sr in enumerate(count_success(results))}
@@ -107,7 +107,7 @@ def print_and_save(total_results, plan_dicts, cfg, log_dir=None):
 
 def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=None):
     task_oracle = hydra.utils.instantiate(cfg.tasks)
-    val_annotations = cfg.annotations
+    val_lang_annotations = cfg.annotations
 
     # video stuff
     if num_videos > 0:
@@ -132,7 +132,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
     for i, (initial_state, eval_sequence) in enumerate(eval_sequences):
         record = i < num_videos
         result = evaluate_sequence(
-            env, model, task_oracle, initial_state, eval_sequence, lang_embeddings, val_annotations, cfg, record, rollout_video, i
+            env, model, task_oracle, initial_state, eval_sequence, lang_embeddings, val_lang_annotations, cfg, record, rollout_video, i
         )
         results.append(result)
         if record:
@@ -151,7 +151,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
 
 
 def evaluate_sequence(
-    env, model, task_checker, initial_state, eval_sequence, lang_embeddings, val_annotations, cfg, record, rollout_video, i
+    env, model, task_checker, initial_state, eval_sequence, lang_embeddings, val_lang_annotations, cfg, record, rollout_video, i
 ):
     robot_obs, scene_obs = get_env_state_for_initial_condition(initial_state)
     env.reset(robot_obs=robot_obs, scene_obs=scene_obs)
@@ -168,7 +168,7 @@ def evaluate_sequence(
     for subtask in eval_sequence:
         if record:
             rollout_video.new_subtask()
-        success = rollout(env, model, task_checker, cfg, subtask, lang_embeddings, val_annotations, record, rollout_video)
+        success = rollout(env, model, task_checker, cfg, subtask, lang_embeddings, val_lang_annotations, record, rollout_video)
         if record:
             rollout_video.draw_outcome(success)
         if success:
@@ -178,17 +178,16 @@ def evaluate_sequence(
     return success_counter
 
 
-def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotations, record=False, rollout_video=None):
+def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_lang_annotations, record=False, rollout_video=None):
     if cfg.debug:
         print(f"{subtask} ", end="")
         time.sleep(0.5)
     obs = env.get_obs()
-    # get lang annotation for subtask
-    lang_annotation = val_annotations[subtask][0]
-    # get language goal embedding
-    # goal = lang_embeddings.get_lang_goal(lang_annotation)
-    goal = {}
-    goal['lang_text'] = val_annotations[subtask][0]
+
+    # get lang goal embedding for subtask
+    goal = lang_embeddings.get_lang_goal(subtask)
+    goal["lang_text"] = val_lang_annotations[subtask][0]
+
     model.reset()
     start_info = env.get_info()
 
@@ -197,7 +196,7 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
         obs, _, _, current_info = env.step(action)
         if cfg.debug:
             img = env.render(mode="rgb_array")
-            join_vis_lang(img, lang_annotation)
+            join_vis_lang(img, goal["lang_text"])
             # time.sleep(0.1)
         if record:
             # update video
@@ -208,12 +207,12 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
             if cfg.debug:
                 print(colored("success", "green"), end=" ")
             if record:
-                rollout_video.add_language_instruction(lang_annotation)
+                rollout_video.add_language_instruction(goal["lang_text"])
             return True
     if cfg.debug:
         print(colored("fail", "red"), end=" ")
     if record:
-        rollout_video.add_language_instruction(lang_annotation)
+        rollout_video.add_language_instruction(goal["lang_text"])
     return False
 
 

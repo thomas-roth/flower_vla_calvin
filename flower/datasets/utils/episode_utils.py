@@ -144,15 +144,21 @@ def process_actions(
     return {"actions": seq_acts}
 
 
-def process_language(episode: Dict[str, np.ndarray], transforms: Dict, with_lang: bool) -> Dict[str, torch.Tensor]:
-    seq_lang = {"lang": torch.empty(0)}
-    if with_lang:
+def process_vision_language(episode: Dict[str, np.ndarray], transforms: Dict, with_vis_lang: bool) -> Dict[str, torch.Tensor]:
+    seq_vis_lang = {"vis": torch.empty(0), "vis_image": torch.empty(0), "lang": torch.empty(0), "lang_text": ""}
+    if with_vis_lang:
+        vis_image = torch.from_numpy(episode["vision_image"]).float().permute(0, 3, 1, 2) # (B, H, W, C) -> (B, C, H, W)
+        if "rgb_static_traj" in transforms:
+            vis_image = transforms["rgb_static_traj"](vis_image)
+        seq_vis_lang["vis"] = episode["vision"]
+        seq_vis_lang["vis_image"] = vis_image
+
         lang = torch.from_numpy(episode["language"]).float()
-        if "language" in transforms:
-            lang = transforms["language"](lang)
-        seq_lang["lang"] = lang
-        seq_lang['lang_text']  = episode['language_text']
-    return seq_lang
+        if "language_instruction" in transforms:
+            lang = transforms["language_instruction"](lang)
+        seq_vis_lang["lang"] = lang
+        seq_vis_lang['lang_text']  = episode['language_text']
+    return seq_vis_lang
 
 
 def get_state_info_dict(episode: Dict[str, np.ndarray]) -> Dict[str, Dict[str, torch.Tensor]]:

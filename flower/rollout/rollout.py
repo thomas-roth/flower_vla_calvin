@@ -78,7 +78,7 @@ class Rollout(Callback):
         add_goal_thumbnail,
         min_window_size,
         max_window_size,
-        lang_folder,
+        vis_lang_folder,
         id_selection_strategy="select_first",
     ):
         self.env = None  # type: Any
@@ -102,10 +102,10 @@ class Rollout(Callback):
         self.device = None  # type: Any
         self.outputs = []
         self.start_robot_neutral = start_robot_neutral
-        self.modalities = []  # ["vis", "lang"] if self.lang else ["vis"]
+        self.modalities = []  # ["vis", "vis_lang"] if self.vis_lang else ["vis"]
         self.embeddings = None
         self.add_goal_thumbnail = add_goal_thumbnail
-        self.lang_folder = lang_folder
+        self.vis_lang_folder = vis_lang_folder
         self.current_epoch = 0
         self.pick_task_ids = partial(
             eval(id_selection_strategy), min_window_size=min_window_size, max_window_size=max_window_size
@@ -133,8 +133,8 @@ class Rollout(Callback):
                     save_dir=self.save_dir,
                 )
             self.embeddings = (
-                np.load(dataset.abs_datasets_dir / self.lang_folder / "embeddings.npy", allow_pickle=True).item()
-                if "lang" in self.modalities
+                np.load(dataset.abs_datasets_dir / self.vis_lang_folder / "embeddings.npy", allow_pickle=True).item()
+                if "vis_lang" in self.modalities
                 else None
             )
 
@@ -284,7 +284,7 @@ class Rollout(Callback):
                val_rgbs: tuple(Tensor, ),
                val_depths: tuple(Tensor, ),
                val_acts: Tensor,
-               val_lang: Tensor,
+               val_vis_lang: Tensor,
                info: Dict,
                idx: int
             pl_module: LightningModule
@@ -311,12 +311,13 @@ class Rollout(Callback):
                     obs = self.env.reset(reset_info, i, 0)
                     start_info = self.env.get_info()
 
-                    if mod == "lang":
+                    if mod == "vis_lang":
                         _task = np.random.choice(list(groundtruth_task))
                         task_embeddings = self.embeddings[_task]["emb"]
-                        language_instruction = self.embeddings[_task]["ann"][0]
+                        traj_image = self.embeddings[_task]["vis_ann"][0]
+                        language_instruction = self.embeddings[_task]["lang_ann"][0]
                         goal = {
-                            "lang": torch.tensor(task_embeddings[np.random.randint(task_embeddings.shape[0])])
+                            "vis_lang": torch.tensor(task_embeddings[np.random.randint(task_embeddings.shape[0])])
                             .to(self.device)
                             .float()
                         }
@@ -356,7 +357,7 @@ class Rollout(Callback):
                             break
                     if record_video:
                         if self.add_goal_thumbnail:
-                            if mod == "lang":
+                            if mod == "vis_lang":
                                 self.rollout_video.add_language_instruction(language_instruction)
                             else:
                                 self.rollout_video.add_goal_thumbnail(rgb_obs["rgb_static"][i, -1])
@@ -383,7 +384,7 @@ class Rollout(Callback):
                val_rgbs: tuple(Tensor, ),
                val_depths: tuple(Tensor, ),
                val_acts: Tensor,
-               val_lang: Tensor,
+               val_vis_lang: Tensor,
                info: Dict,
                idx: int
         Returns:

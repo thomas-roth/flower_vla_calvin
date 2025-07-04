@@ -147,7 +147,7 @@ class FLOWERVLA(pl.LightningModule):
         # Initialize state tracking
         self.rollout_step_counter = 0
         self.pred_action_seq = None
-        self.modality_scope = "lang"
+        self.modality_scope = "vis_lang"
         # Save optimizer config
         self.optimizer_config = optimizer
         self.lr_scheduler_config = lr_scheduler
@@ -639,25 +639,25 @@ class FLOWERVLA(pl.LightningModule):
         """Encode observations using Florence-2"""
         device = self.device
         default_type = next(self.parameters()).dtype
+
+        primary_image = batch["vis_image"]
+        secondary_image = batch["rgb_obs"]["rgb_gripper"]
         
-        
-        embed_tensor = torch.zeros(len(batch["rgb_obs"]['rgb_static']), 1, 1)
-        action_type_tensor = torch.ones(len(batch["rgb_obs"]['rgb_static']), self.act_window_size, 7)
+        embed_tensor = torch.zeros(len(primary_image), 1, 1)
+        action_type_tensor = torch.ones(len(primary_image), self.act_window_size, 7)
         # Process primary image
-        image_tensor = batch["rgb_obs"]['rgb_static']
-        B, T, C, H, W = image_tensor.shape
+        B, T, C, H, W = primary_image.shape
         
         # Extract visual features
         image_features = self.vlm._encode_image(
-            image_tensor.view(-1, C, H, W).to(device).to(default_type)
+            primary_image.view(-1, C, H, W).to(device).to(default_type)
         ).to(default_type)
         image_features = image_features.view(B, T * image_features.shape[1], -1)
         
         # Process second view if enabled
         if self.use_second_view:
-            image2_tensor = batch["rgb_obs"]['rgb_gripper']
             image2_features = self.vlm._encode_image(
-                image2_tensor.view(-1, C, H, W).to(device).to(default_type)
+                secondary_image.view(-1, C, H, W).to(device).to(default_type)
             ).to(default_type)
             image2_features = image2_features.view(B, T * image2_features.shape[1], -1)
             image_features = torch.cat([image_features, image2_features], dim=1)
@@ -703,7 +703,7 @@ class FLOWERVLA(pl.LightningModule):
             'features': features,
             'frequency_embeds': frequency_embeds,
             'action_space_embeds': None,
-            'action_type': torch.ones_like(action_type_tensor), # actiont ype is always 1
+            'action_type': torch.ones_like(action_type_tensor), # action type is always 1
             'proprio': proprio,
             'attention_mask': attention_mask,
         }
@@ -743,7 +743,7 @@ class FLOWERVLA(pl.LightningModule):
                 decoded = pred
         return decoded
 
-    def forward(self, obs: Dict, goal: Dict) -> torch.Tensor:
+    def forward(self, obs_batch: Dict, goal: Dict) -> torch.Tensor:
         """
         Forward pass for inference.
         
@@ -754,19 +754,10 @@ class FLOWERVLA(pl.LightningModule):
         Returns:
             Predicted action sequence
         """
-        # batch = {'rgb_obs': obs, '"lang_text"': goal}
-        rgb_static = obs["rgb_obs"]['rgb_static']
-        rgb_gripper = obs["rgb_obs"]['rgb_gripper']
-
         # Create batch for observation encoding
-        batch = {
-            "rgb_obs": {
-                "rgb_static": rgb_static,
-                "rgb_gripper": rgb_gripper
-            },
-            "lang_text": [goal["lang_text"]]
-        }
-        features = self.encode_observations(batch)
+        obs_batch["lang_text"] = [goal["lang_text"]]
+
+        features = self.encode_observations(obs_batch)
         
         # Generate initial noise
         noise = torch.randn(

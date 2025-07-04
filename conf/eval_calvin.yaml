@@ -3,20 +3,16 @@ defaults:
   - callbacks/rollout_lh/tasks@tasks: new_playtable_tasks
 
 eval_cfg_overwrite:
-  datamodule:
-    datasets:
-      lang_dataset:
-        lang_folder: lang_annotations
   model:
     num_sampling_steps: ${num_sampling_steps}
 
-train_folder: /home/troth/code/hiwi/flower_vla_calvin/pretrained/flower_vla_pret
-checkpoint: /home/troth/code/hiwi/flower_vla_calvin/pretrained/flower_vla_pret/360000_model_weights.pt
+train_folder: /home/troth/code/hiwi/iTRAP/iTRAP/models/flower_vla_calvin/pretrained/flower_vla_pret
+checkpoint: /home/troth/code/hiwi/iTRAP/iTRAP/models/flower_vla_calvin/pretrained/flower_vla_pret/360000_model_weights.pt # TODO: change after training
 device: 0
 
 
-log_dir: /home/troth/code/hiwi/flower_vla_calvin/outputs/
-dataset_path: /home/troth/data/task_D_D
+log_dir: /home/troth/code/hiwi/iTRAP/iTRAP/models/flower_vla_calvin/outputs/
+dataset_path: /home/reuss/data/calvin_abc_rlds
 num_videos: 30
 debug: False
 

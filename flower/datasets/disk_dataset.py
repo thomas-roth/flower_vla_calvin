@@ -31,7 +31,7 @@ class DiskDataset(BaseDataset):
     Dataset that loads episodes as individual files from disk.
 
     Args:
-        skip_frames: Skip this amount of windows for language dataset.
+        skip_frames: Skip this amount of windows for vision-language dataset.
         save_format: File format in datasets_dir (pkl or npz).
         pretrain: Set to True when pretraining.
     """
@@ -55,8 +55,8 @@ class DiskDataset(BaseDataset):
         self.pretrain = pretrain
         self.skip_frames = skip_frames
 
-        if self.with_lang:
-            self.episode_lookup, self.lang_lookup, self.lang_ann, self.lang_text = self._build_file_indices_lang(self.abs_datasets_dir)
+        if self.with_vis_lang:
+            self.episode_lookup, self.vis_lang_lookup, self.vis_ann, self.vis_image, self.lang_ann, self.lang_text = self._build_file_indices_vis_lang(self.abs_datasets_dir)
         else:
             self.episode_lookup = self._build_file_indices(self.abs_datasets_dir)
 
@@ -88,15 +88,17 @@ class DiskDataset(BaseDataset):
         start_idx = self.episode_lookup[idx]
         end_idx = start_idx + window_size
         keys = list(chain(*self.observation_space.values()))
+        keys.remove("vision")
         keys.remove("language")
         keys.append("scene_obs")
         episodes = [self.load_file(self._get_episode_name(file_idx)) for file_idx in range(start_idx, end_idx)]
         episode = {key: np.stack([ep[key] for ep in episodes]) for key in keys}
-        if self.with_lang:
-            episode["language"] = self.lang_ann[self.lang_lookup[idx]][0]  # TODO check  [0]
+        if self.with_vis_lang:
+            episode["vision"] = self.vis_ann[self.vis_lang_lookup[idx]][0]  # TODO check  [0]
+            episode["language"] = self.lang_ann[self.vis_lang_lookup[idx]][0]  # TODO check  [0]
         return episode
 
-    def _build_file_indices_lang(self, abs_datasets_dir: Path) -> Tuple[np.ndarray, List, np.ndarray]:
+    def _build_file_indices_vis_lang(self, abs_datasets_dir: Path) -> Tuple[np.ndarray, List, np.ndarray]:
         """
         This method builds the mapping from index to file_name used for loading the episodes of the language dataset.
 
@@ -105,40 +107,51 @@ class DiskDataset(BaseDataset):
 
         Returns:
             episode_lookup: Mapping from training example index to episode (file) index.
-            lang_lookup: Mapping from training example to index of language instruction.
+            vis_lang_lookup: Mapping from training example to index of vision-language instruction.
+            vis_ann: Vision embeddings.
+            vis_image: Images with drawn trajectories.
             lang_ann: Language embeddings.
+            lang_text: Language instructions.
         """
         assert abs_datasets_dir.is_dir()
 
         episode_lookup = []
 
-        try:
-            print("trying to load lang data from: ", abs_datasets_dir / self.lang_folder / "auto_lang_ann.npy")
-            lang_data = np.load(abs_datasets_dir / self.lang_folder / "auto_lang_ann.npy", allow_pickle=True).item()
-        except Exception:
-            print("Exception, trying to load lang data from: ", abs_datasets_dir / "auto_lang_ann.npy")
-            lang_data = np.load(abs_datasets_dir / "auto_lang_ann.npy", allow_pickle=True).item()
+        split = "validation" if self.validation else "training"
+        vis_lang_file_path = Path(self.vis_lang_folder) / split / "auto_vis_lang_ann.npy"
+        if not vis_lang_file_path.is_absolute():
+            vis_lang_file_path = abs_datasets_dir / vis_lang_file_path
 
-        ep_start_end_ids = lang_data["info"]["indx"]  # each of them are 64
-        lang_ann = lang_data["language"]["emb"]  # length total number of annotations
-        lang_text = lang_data["language"]["ann"]  # length total number of annotations
-        lang_lookup = []
+        try:
+            print("trying to load vis-lang data from: ", vis_lang_file_path)
+            vis_lang_data = np.load(vis_lang_file_path, allow_pickle=True).item()
+        except Exception:
+            default_file_path = abs_datasets_dir / "vis_lang_annotations" / "auto_vis_lang_ann.npy"
+            print(f"{vis_lang_file_path} does not exist, trying to load vis-lang data from: {default_file_path}")
+            vis_lang_data = np.load(default_file_path, allow_pickle=True).item()
+
+        ep_start_end_ids = vis_lang_data["info"]["indx"]  # each of them are 64
+        vis_ann = vis_lang_data["vision"]["emb"]  # length total number of annotations
+        vis_image = vis_lang_data["vision"]["ann"]  # length total number of annotations
+        lang_ann = vis_lang_data["language"]["emb"]  # length total number of annotations
+        lang_text = vis_lang_data["language"]["ann"]  # length total number of annotations
+        vis_lang_lookup = []
         for i, (start_idx, end_idx) in enumerate(ep_start_end_ids):
             if self.pretrain:
-                start_idx = max(start_idx, end_idx + 1 - self.min_window_size - self.aux_lang_loss_window)
+                start_idx = max(start_idx, end_idx + 1 - self.min_window_size - self.aux_vis_lang_loss_window)
             assert end_idx >= self.max_window_size
             cnt = 0
             for idx in range(start_idx, end_idx + 1 - self.min_window_size):
                 if cnt % self.skip_frames == 0:
-                    lang_lookup.append(i)
+                    vis_lang_lookup.append(i)
                     episode_lookup.append(idx)
                 cnt += 1
 
-        return np.array(episode_lookup), lang_lookup, lang_ann, lang_text
+        return np.array(episode_lookup), vis_lang_lookup, vis_ann, vis_image, lang_ann, lang_text
 
     def _build_file_indices(self, abs_datasets_dir: Path) -> np.ndarray:
         """
-        This method builds the mapping from index to file_name used for loading the episodes of the non language
+        This method builds the mapping from index to file_name used for loading the episodes of the non vision-language
         dataset.
 
         Args:
@@ -211,6 +224,7 @@ class ExtendedDiskDataset(DiskDataset):
         start_idx = self.episode_lookup[idx]
         end_idx = start_idx + self.action_seq_len + self.obs_seq_len-1
         keys = list(chain(*self.observation_space.values()))
+        keys.remove("vision")
         keys.remove("language")
         keys.append("scene_obs")
 
@@ -240,10 +254,11 @@ class ExtendedDiskDataset(DiskDataset):
                 else:
                     episode[key] = stacked_data[:self.obs_seq_len, :]
 
-        if self.with_lang:
-            episode["language"] = self.lang_ann[self.lang_lookup[idx]][0]  # TODO check  [0]
-            episode["language_text"] = self.lang_text[self.lang_lookup[idx]] #[0]  # TODO check  [0]
-        
+        if self.with_vis_lang:
+            episode["vision"] = self.vis_ann[self.vis_lang_lookup[idx]]
+            episode["vision_image"] = self.vis_image[self.vis_lang_lookup[idx]][np.newaxis, :]
+            episode["language"] = self.lang_ann[self.vis_lang_lookup[idx]]
+            episode["language_text"] = self.lang_text[self.vis_lang_lookup[idx]]
 
         return episode
        
@@ -263,7 +278,7 @@ class ExtendedDiskDataset(DiskDataset):
     
     def _build_file_indices(self, abs_datasets_dir: Path) -> np.ndarray:
         """
-        This method builds the mapping from index to file_name used for loading the episodes of the non language
+        This method builds the mapping from index to file_name used for loading the episodes of the non vision-language
         dataset.
 
         Args:
@@ -339,9 +354,9 @@ class LabeledSubsetDiskDataset(ExtendedDiskDataset):
         if subset_seed is not None:
             np.random.seed(subset_seed)
             
-        # Get language annotations
-        lang_data = np.load(self.abs_datasets_dir / self.lang_folder / "auto_lang_ann.npy", allow_pickle=True).item()
-        labeled_episodes = lang_data["info"]["indx"]
+        # Get vision-language annotations
+        vis_lang_data = np.load(self.abs_datasets_dir / self.vis_lang_folder / "auto_vis_lang_ann.npy", allow_pickle=True).item()
+        labeled_episodes = vis_lang_data["info"]["indx"]
         
         # Get indices of labeled episodes
         labeled_indices = []
@@ -379,13 +394,13 @@ class BalancedLabeledSubsetDataset(ExtendedDiskDataset):
         if subset_seed is not None:
             np.random.seed(subset_seed)
             
-        # Load language annotations
-        lang_data = np.load(self.abs_datasets_dir / self.lang_folder / "auto_lang_ann.npy", allow_pickle=True).item()
-        
+        # Load vision-language annotations
+        vis_lang_data = np.load(self.abs_datasets_dir / self.vis_lang_folder / "auto_vis_lang_ann.npy", allow_pickle=True).item()
+
         # Create mapping of tasks to episodes
         task_to_episodes = defaultdict(list)
-        for i, (start_idx, end_idx) in enumerate(lang_data["info"]["indx"]):
-            task = lang_data["language"]["task"][i]
+        for i, (start_idx, end_idx) in enumerate(vis_lang_data["info"]["indx"]):
+            task = vis_lang_data["language"]["task"][i]
             task_to_episodes[task].extend(range(start_idx, end_idx + 1))
             
         # Print task distribution in original dataset
@@ -423,17 +438,17 @@ class BalancedLabeledSubsetDataset(ExtendedDiskDataset):
         print(f"\nTotal selected episodes: {len(selected_episodes)}/{total_original} "
               f"({len(selected_episodes)/total_original*100:.1f}%)")
 
-    def _check_task_coverage(self, lang_data: Dict, selected_episodes: List[int]) -> None:
+    def _check_task_coverage(self, vis_lang_data: Dict, selected_episodes: List[int]) -> None:
         """Helper method to verify task coverage in selected episodes"""
         task_coverage = defaultdict(int)
         selected_episode_set = set(selected_episodes)
         
-        for i, (start_idx, end_idx) in enumerate(lang_data["info"]["indx"]):
-            task = lang_data["language"]["task"][i]
+        for i, (start_idx, end_idx) in enumerate(vis_lang_data["info"]["indx"]):
+            task = vis_lang_data["language"]["task"][i]
             episode_range = set(range(start_idx, end_idx + 1))
             if episode_range & selected_episode_set:
                 task_coverage[task] += 1
                 
-        uncovered_tasks = set(lang_data["language"]["task"]) - set(task_coverage.keys())
+        uncovered_tasks = set(vis_lang_data["language"]["task"]) - set(task_coverage.keys())
         if uncovered_tasks:
             print(f"Warning: The following tasks have no episodes in the subset: {uncovered_tasks}")
