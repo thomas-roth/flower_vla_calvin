@@ -184,6 +184,9 @@ class FLOWERVLA(pl.LightningModule):
         for key, value in state_dict.items():
             new_key = key.replace("agent.", "")  # Remove 'agent.' if it exists
             new_key = new_key.replace("mlp.c_", "mlp.")  # Fix MLP keys
+            new_key = new_key.replace("language_encoder", "language_model.model.encoder") # Fix VLM encoder keys
+            new_key = new_key.replace("language_final_logits_bias", "language_model.final_logits_bias") # Fix VLM logits bias keys
+            new_key = new_key.replace("language_shared", "language_model.model.shared") # Fix VLM shared keys
             new_state_dict[new_key] = value
 
         # Load the weights, allowing partial matches
