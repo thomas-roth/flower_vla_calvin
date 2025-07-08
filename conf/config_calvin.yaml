@@ -5,15 +5,15 @@ defaults:
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 
-root_data_dir: /home/reuss/data/calvin_abc_rlds
-vis_lang_folder: lang_clip_resnet50 # TODO: change after dataset creation
+root_data_dir: /DATA/calvin/task_ABC_D
+vis_lang_folder: /home/troth/data/iTRAP-flower/calvin_policy_dataset/vis_lang_clip_resnet50
 
 log_dir: ./logs
 slurm: false
 seed: 242
 device: 'cuda'
 batch_size: 16 #8 
-devices: 2 #4
+devices: 4
 act_dim: 7
 proprio_dims: 7
 obs_dim: 512
@@ -26,7 +26,7 @@ gen_img_res: 112
 max_epochs: 35
 rollout_lh_skip_epochs: 19
 num_workers: 12
-benchmark_name: attvis_flower_calvin_d
+benchmark_name: flower_calvin_abc
 use_extracted_rel_actions: False
 
 trainer:
