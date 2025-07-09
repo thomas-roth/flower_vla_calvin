@@ -16,4 +16,4 @@ num_videos: 20 #${.num_sequences} # dot to enable referencing to same config fil
 save_dir: ./rollout_videos
 vis_lang_folder: ${vis_lang_folder}
 debug: false
-traj_stretch_factor: 1.1
+traj_stretch_factor: 1.0

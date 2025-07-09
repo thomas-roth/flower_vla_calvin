@@ -219,7 +219,6 @@ class RolloutLongHorizon(Callback):
         )
 
         if should_evaluate:
-
             results = self.evaluate_policy(pl_module)
             results = gather_results(results)
             count = Counter(results)  # type: ignore
@@ -251,6 +250,10 @@ class RolloutLongHorizon(Callback):
         )
 
     def evaluate_policy(self, model):
+        # skip rollout as VLM setup not available
+        self._log_zero_metrics(model)
+        return [0]
+
         vlm_client = setup_vlm_client()
 
         results = []
