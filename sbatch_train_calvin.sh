@@ -5,16 +5,16 @@
 #SBATCH -J iTRAP_FLOWER_ABC
 
 # Cluster Settings
-#SBATCH -n 5       # Number of tasks
-#SBATCH -c 16  # Number of cores per task
-#SBATCH -t 12:00:00 ## 1-00:30:00 # 06:00:00 # 1-00:30:00 # 2-00:00:00
-#SBATCH --gres=gpu:5
-#SBATCH --ntasks-per-node=5
+#SBATCH -N 2                    # Number of nodes
+#SBATCH -n 6                    # Number of tasks in total
+#SBATCH -c 16                   # Number of cores per task
+#SBATCH --gres=gpu:4,gpu:2      # Number of GPUs for each node
+#SBATCH -t 1-00:30:00 ## 12:00:00 # 06:00:00 # 1-00:30:00 # 2-00:00:00
 
 
 # Define the paths for storing output and error files
-#SBATCH --output=/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/logs/outputs/%x_%j.out
-#SBATCH --error=/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/logs/outputs/%x_%j.err
+#SBATCH --output=/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/outputs/%x_%j.out
+#SBATCH --error=/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/outputs/%x_%j.err
 
 
 # -------------------------------
