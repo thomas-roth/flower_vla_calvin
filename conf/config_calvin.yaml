@@ -12,8 +12,8 @@ log_dir: /hkfs/work/workspace/scratch/uruox-itrap_flower_abc/logs
 slurm: false
 seed: 242
 device: 'cuda'
-batch_size: 6 #8
-devices: 6 #4
+batch_size: 8
+devices: "auto"
 act_dim: 7
 proprio_dims: 7
 obs_dim: 512

@@ -1,5 +1,5 @@
---find-links https://download.pytorch.org/whl/cu116/torch_stable
-numpy>1.2
+--find-links https://download.pytorch.org/whl/cu121/torch_stable.html
+numpy<2.0
 hydra-core==1.1.1
 hydra-colorlog
 matplotlib
@@ -7,14 +7,14 @@ opencv-python
 omegaconf
 plotly
 ftfy
-torch==2.7.0
+torch==2.3.1+cu121
+torchvision==0.18.1+cu121
 torchsde
 torchdiffeq
 pytorch-lightning==2.0.8
 gitpython
 scipy
 sentence-transformers
-torchsde
 einops
 tqdm
 termcolor

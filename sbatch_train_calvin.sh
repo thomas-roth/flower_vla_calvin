@@ -5,21 +5,21 @@
 #SBATCH -J iTRAP_FLOWER_ABC
 
 # Cluster Settings
-#SBATCH -N 2                    # Number of nodes
-#SBATCH -n 6                    # Number of tasks in total
+#SBATCH -n 1                    # Number of nodes
+#SBATCH --ntasks-per-node=1     # Number of tasks per node
+#SBATCH --gres=gpu:4            # Number of GPUs
 #SBATCH -c 16                   # Number of cores per task
-#SBATCH --gres=gpu:4,gpu:2      # Number of GPUs for each node
-#SBATCH -t 1-00:30:00 ## 12:00:00 # 06:00:00 # 1-00:30:00 # 2-00:00:00
+#SBATCH -t 1-00:00:00 ## 12:00:00 # 06:00:00 # 1-00:30:00 # 2-00:00:00
 
 
 # Define the paths for storing output and error files
-#SBATCH --output=/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/outputs/%x_%j.out
-#SBATCH --error=/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/outputs/%x_%j.err
+#SBATCH --output=/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/logs/slurm/%x_%j.out
+#SBATCH --error=/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/logs/slurm/%x_%j.err
 
 
 # -------------------------------
 # Activate the virtualenv / conda environment
-conda activate itrap
+source /home/hk-project-p0024638/uruox/miniconda3/bin/activate itrap
 
 export TORCH_USE_CUDA_DSA=1
 # NNODES=1
