@@ -5,10 +5,10 @@ defaults:
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 
-root_data_dir: $TMPDIR/data/task_ABC_D
-vis_lang_folder: $TMPDIR/data/vis_lang_clip_resnet50
+root_data_dir: ${oc.env:TMPDIR}/data/task_ABC_D
+vis_lang_folder: ${oc.env:TMPDIR}/data/vis_lang_clip_resnet50
 
-log_dir: $TMPDIR/logs
+log_dir: ${oc.env:TMPDIR}/logs
 slurm: false
 seed: 242
 device: 'cuda'

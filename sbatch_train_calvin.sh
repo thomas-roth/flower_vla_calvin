@@ -1,25 +1,29 @@
 #!/bin/bash
 
-#SBATCH -p accelerated
-#SBATCH -A hk-project-p0024638
-#SBATCH -J iTRAP_FLOWER_ABC
+# Job Settings
+#SBATCH -A hk-project-p0024638  # Project name
+#SBATCH -J iTRAP_FLOWER_ABC     # Job name
 
 # Cluster Settings
+#SBATCH -p accelerated          # Partition name
 #SBATCH -n 4                    # Number of tasks
 #SBATCH --ntasks-per-node=4     # Number of tasks per node
 #SBATCH --gres=gpu:4            # Number of GPUs
-#SBATCH -c 4                   # Number of cores per task
-#SBATCH -t 1-00:00:00 ## 12:00:00 # 06:00:00 # 1-00:30:00 # 2-00:00:00
+#SBATCH -c 4                    # Number of cores per task
+#SBATCH -t 12:00:00 ## 12:00:00 # 06:00:00 # 1-00:30:00 # 2-00:00:00
 
 # Define the paths for storing output and error files
-#SBATCH --output=$TMPDIR/logs/slurm/%x_%j.out
-#SBATCH --error=$TMPDIR/logs/slurm/%x_%j.err
+#SBATCH --output=/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/logs/slurm/%x_%j.out
+#SBATCH --error=/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/logs/slurm/%x_%j.err
 
 # -------------------------------
 
-# Load dataset into tmpdir
-tar -C $TMPDIR/data -xvzf /hkfs/work/workspace/scratch/uruox-itrap_flower_abc/data/task_ABC_D.tgz
-tar -C $TMPDIR/data -xvzf /home/hk-project-p0024638/uruox/data/iTRAP-FLOWER/calvin_policy_dataset/vis_lang_clip_resnet50.tgz
+# Create necessary dirs in tmpdir
+mkdir -p $TMPDIR/data $TMPDIR/logs
+
+# Load dataset into tmpdir & log progress to stdout
+(pv -f -w 90 -N "Extracting dataset" /hkfs/work/workspace/scratch/uruox-itrap_flower_abc/data/task_ABC_D.tar | tar -C $TMPDIR/data -xf -) 2>&1
+(pv -f -w 90 -N "Extracting dataset annotations" /home/hk-project-p0024638/uruox/data/iTRAP-FLOWER/calvin_policy_dataset/vis_lang_clip_resnet50.tar | tar -C $TMPDIR/data -xf -) 2>&1
 
 # Activate the virtualenv / conda environment
 source /home/hk-project-p0024638/uruox/miniconda3/bin/activate itrap
