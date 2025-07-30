@@ -251,11 +251,11 @@ def main(cfg):
     if log_wandb:
         os.makedirs(log_dir / "wandb", exist_ok=False)
         run = wandb.init(
-            project='attvis_flower_calvin_eval',
+            project='flower_calvin_abc_eval',
             entity=cfg.wandb_entity,
             # group=cfg.model_name + cfg.sampler_type + '_' + str(cfg.num_sampling_steps) + '_steps_' + str(cfg.num_sequences) + '_rollouts_',
             config=OmegaConf.to_object(cfg),
-            # dir=log_dir / "wandb",
+            dir=log_dir / "wandb",
         )
 
     results[Path(cfg.checkpoint)], plans[Path(cfg.checkpoint)] = evaluate_policy(model, env, lang_embeddings, cfg, num_videos=cfg.num_videos, save_dir=Path(log_dir))

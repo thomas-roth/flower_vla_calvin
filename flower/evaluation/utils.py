@@ -173,7 +173,7 @@ def get_default_mode_and_env(train_folder, dataset_path, checkpoint, env=None, l
     def_cfg = OmegaConf.load(train_cfg_path)
     eval_override_cfg = OmegaConf.create(eval_cfg_overwrite)
     cfg = OmegaConf.merge(def_cfg, eval_override_cfg)
-    vis_lang_folder = cfg.datamodule.datasets.lang_dataset.vis_lang_folder
+    vis_lang_folder = cfg.datamodule.datasets.vis_lang_dataset.vis_lang_folder
     
     if not hydra.core.global_hydra.GlobalHydra.instance().is_initialized():
         hydra.initialize("../../conf/datamodule/datasets")
