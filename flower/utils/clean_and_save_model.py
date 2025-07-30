@@ -3,12 +3,12 @@ import os
 from pathlib import Path
 import torch
 from safetensors.torch import save_file
-from pytorch_lightning.utilities import rank_zero_only
+import gc
 
 
 
-def _get_latest_model_path(logs_path: Path) -> str:
-    # Get latest model of latest run directory
+def _get_latest_run_path(logs_path: Path) -> str:
+    # Get saved models directory of latest run
     all_days_path = [dir for dir in logs_path.iterdir() if dir.is_dir()]
     all_days_path.sort(key=lambda dir: dir.stat().st_ctime, reverse=True)
     if len(all_days_path) == 0:
@@ -21,74 +21,86 @@ def _get_latest_model_path(logs_path: Path) -> str:
         return None
     last_run_last_day_path = all_runs_last_day_path[-1]
     
-    seed = last_run_last_day_path.name.split("d")[-1]
-    models_last_run_last_day_path = Path(last_run_last_day_path / f"seed_{seed}" / "saved_models")
-    if not models_last_run_last_day_path.exists():
+    seed = last_run_last_day_path.name.split("seed")[-1]
+    saved_models_last_run_last_day_path = Path(last_run_last_day_path / f"seed_{seed}" / "saved_models")
+    if not saved_models_last_run_last_day_path.exists():
         return None
-    
-    models_last_run_last_day_path = [dir for dir in models_last_run_last_day_path.iterdir() if dir.is_dir()]
-    models_last_run_last_day_path.sort()
-    if len(models_last_run_last_day_path) == 0:
-        return None
-    latest_model_path = models_last_run_last_day_path[-1]
 
-    return latest_model_path
+    return saved_models_last_run_last_day_path
 
 
-def _get_checkpoint_path(model_path: Path) -> str:
-    checkpoint_files = list(model_path.glob("*.ckpt"))
-    
-    if not checkpoint_files:
-        return None
-    
-    checkpoints_with_scores = []
-    for checkpoint_file in checkpoint_files:
-        score = float(checkpoint_file.stem.split("=")[-1])
-        checkpoints_with_scores.append((score, checkpoint_file))
-    
-    checkpoints_with_scores.sort(reverse=True)
-    return checkpoints_with_scores[0][1]
+def get_model_checkpoint_paths(logger, path_to_ckpt_file_or_dir=None):
+    if path_to_ckpt_file_or_dir is None:
+        logger.info("No path to model checkpoint file or directory given. Cleaning & saving all checkpoints of latest run.")
 
+        runs_path = Path(__file__).absolute().parents[5] / "logs" / "runs"
+        model_checkpoints_dir_path = _get_latest_run_path(runs_path)
+        if model_checkpoints_dir_path is None:
+            logger.warning("Aborting: no latest run found")
+            return None
+        logger.info(f"Found latest run: {model_checkpoints_dir_path}")
 
-@rank_zero_only
-def clean_and_save_model(logger, model_checkpoint_path = None):
-    if model_checkpoint_path is None:
-        logs_path = Path(__file__).absolute().parents[2] / "logs" / "runs"
-        model_path = _get_latest_model_path(logs_path)
-
-        if model_path is None:
-            logger.info("No saved model found. Aborting.")
-            return
-
-        logger.info("Loading model checkpoint...")
-        model_checkpoint_path = _get_checkpoint_path(model_path)
-
-        if model_checkpoint_path is None:
-            logger.info("No model checkpoint found. Aborting.")
-            return
+        model_checkpoint_paths = list(model_checkpoints_dir_path.rglob("*.ckpt"))
+        if not model_checkpoint_paths:
+            logger.warning("Aborting: no model checkpoint found in latest run")
+            return None
+        model_checkpoint_paths.sort()
+    elif Path(path_to_ckpt_file_or_dir).is_dir():
+        # is_dir() also checks if path exists
+        logger.info(f"Path to model checkpoint directory given. Cleaning & saving checkpoints in: {path_to_ckpt_file_or_dir}")
+        model_checkpoint_paths = list(Path(path_to_ckpt_file_or_dir).rglob("*.ckpt"))
+        if not model_checkpoint_paths:
+            logger.warning(f"Aborting: no model checkpoints found in directory: {path_to_ckpt_file_or_dir}")
+            return None
+        model_checkpoint_paths.sort()
+    elif Path(path_to_ckpt_file_or_dir).is_file() and path_to_ckpt_file_or_dir.endswith(".ckpt"):
+        # is_file() also checks if path exists
+        logger.info(f"Path to model checkpoint file given. Cleaning & saving checkpoint at: {path_to_ckpt_file_or_dir}")
+        model_checkpoint_paths = [path_to_ckpt_file_or_dir]
     else:
-        model_path = str(Path(model_checkpoint_path).parent)
+        logger.error(f"Aborting: given path to model checkpoint file or directory invalid: {path_to_ckpt_file_or_dir}")
+        return None
 
-    checkpoint = torch.load(model_checkpoint_path, map_location="cpu", weights_only=False)
+    return model_checkpoint_paths
+
+
+def clean_and_save_model(logger, path_to_ckpt_file_or_dir=None, delete_ckpt=True):
+    model_checkpoint_paths = get_model_checkpoint_paths(logger, path_to_ckpt_file_or_dir)
+    if model_checkpoint_paths is None:
+        return
     
-    logger.info("Cleaning model checkpoint")
-    state_dict = checkpoint["state_dict"]
-    cleaned_state_dict = {} #k.replace('model.', ''): v for k, v in state_dict.items()
-    for key, value in state_dict.items():
-        new_key = key.replace("model.", "")
-        cleaned_state_dict[new_key] = value.clone() if torch.is_tensor(value) else value
+    for i, model_checkpoint_path in enumerate(model_checkpoint_paths):
+        logger.info(f"Processing model checkpoint {i+1} of {len(model_checkpoint_paths)}: {str(model_checkpoint_path).split('runs/')[-1]}")
 
-    logger.info("Saving model checkpoint in safetensors format")
-    save_file(cleaned_state_dict, os.path.join(model_path, "model_cleaned.safetensors"))
+        logger.info("Loading model checkpoint")
+        checkpoint = torch.load(model_checkpoint_path, map_location="cpu", weights_only=False)
+        
+        logger.info("Cleaning model checkpoint")
+        state_dict = checkpoint["state_dict"]
+        cleaned_state_dict = {} #k.replace('model.', ''): v for k, v in state_dict.items()
+        for key, value in state_dict.items():
+            new_key = key.replace("model.", "")
+            cleaned_state_dict[new_key] = value.clone() if torch.is_tensor(value) else value
 
-    logger.info("Removing original checkpoint file")
-    os.remove(model_checkpoint_path)
+        logger.info("Saving model checkpoint in safetensors format")
+        save_file(cleaned_state_dict, os.path.join(Path(model_checkpoint_path).parent, "model_cleaned.safetensors"))
+
+        if delete_ckpt:
+            logger.info("Removing original checkpoint file")
+            os.remove(model_checkpoint_path)
+
+        # Clear memory
+        del checkpoint
+        del state_dict
+        del cleaned_state_dict
+        gc.collect()
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
-                        format='[%(asctime)s][%(name)s][%(levelname)s] - %(message)s',
+                        format='\033[34m[%(asctime)s][%(name)s][%(levelname)s]\033[0m - %(message)s',
                         handlers=[logging.StreamHandler()])
     logger = logging.getLogger(__name__)
 
-    clean_and_save_model(logger, model_checkpoint_path=None)
+    clean_and_save_model(logger, path_to_ckpt_file_or_dir=None,
+                         delete_ckpt=True)
