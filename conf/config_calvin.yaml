@@ -6,7 +6,7 @@ defaults:
   - override hydra/hydra_logging: colorlog
 
 root_data_dir: /DATA/calvin/task_ABC_D #${oc.env:TMPDIR}/data/task_ABC_D
-vis_lang_folder: /home/troth/data/iTRAP-flower/calvin_policy_dataset/vis_lang_clip_resnet50 #${oc.env:TMPDIR}/data/vis_lang_clip_resnet50
+vis_lang_folder: /home/troth/data/iTRAP-flower/calvin_policy_dataset/2025-07-08_14-45-56/vis_lang_clip_resnet50 #${oc.env:TMPDIR}/data/vis_lang_clip_resnet50
 
 log_dir: /home/troth/code/hiwi/iTRAP/logs #${oc.env:TMPDIR}/logs
 slurm: false
