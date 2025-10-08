@@ -6,7 +6,7 @@ eval_cfg_overwrite:
   model:
     num_sampling_steps: ${num_sampling_steps}
 
-train_folder: /home/troth/code/hiwi/iTRAP/iTRAP/models/flower_vla_calvin/pretrained/1000-batches_tmpdir/seed_42/saved_models/epoch=24_eval_lh
+train_folder: /home/troth/code/hiwi/iTRAP/iTRAP/models/flower_vla_calvin/pretrained/finetuned_calvin_abc/seed_42/saved_models/epoch=34_eval_lh
 checkpoint: ${train_folder}/model_cleaned.safetensors
 device: 0
 
@@ -23,7 +23,7 @@ wandb:
   name: ${now:%H-%M-%S}
   entity: thomas-roth-karlsruhe-institute-of-technology
 
-num_sequences: 50 #1000
+num_sequences: 100 #1000
 ep_len: 360
 num_sampling_steps: 4
 multistep: 10

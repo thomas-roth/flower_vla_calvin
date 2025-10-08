@@ -254,9 +254,9 @@ class RolloutVideo:
 
             tag = tag.replace("/", "_")
             if save_as_video:
-                filename = str(self.save_dir / f"{tag}_{global_step}.mp4")
+                filename = str(self.save_dir / f"{tag}_global-step-{global_step}.mp4")
             else:
-                filename = self.save_dir / f"{tag}_{global_step}.gif"
+                filename = self.save_dir / f"{tag}_global-step-{global_step}.gif"
             if save_as_video:
                 clip.write_videofile(filename, codec='libx264', bitrate="5000k")  # You can adjust the bitrate as needed
             else:
