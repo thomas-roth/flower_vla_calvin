@@ -4,7 +4,7 @@ from typing import Dict, Tuple, Union
 
 import numpy as np
 from omegaconf import DictConfig
-import pyhash
+# import pyhash  # Commented out due to Python 3.11 compatibility issues
 import torch
 from torch.utils.data import Dataset
 
@@ -17,7 +17,12 @@ from flower.datasets.utils.episode_utils import (
     process_state,
 )
 
-hasher = pyhash.fnv1_32()
+# Replace pyhash with built-in hash for Python 3.11 compatibility
+# hasher = pyhash.fnv1_32()
+def hasher(s):
+    """Deterministic hash function to replace pyhash.fnv1_32()"""
+    return hash(s) & 0x7FFFFFFF  # Return positive 32-bit integer
+
 logger = logging.getLogger(__name__)
 
 

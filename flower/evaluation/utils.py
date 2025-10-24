@@ -9,13 +9,18 @@ import hydra
 from matplotlib import pyplot as plt
 import numpy as np
 from omegaconf import OmegaConf
-import pyhash
+# import pyhash  # Commented out due to Python 3.11 compatibility issues
 import torch
 from hydra.core.global_hydra import GlobalHydra
 
 from flower.utils.utils import add_text, format_sftp_path
 
-hasher = pyhash.fnv1_32()
+# Replace pyhash with built-in hash for Python 3.11 compatibility
+# hasher = pyhash.fnv1_32()
+def hasher(s):
+    """Deterministic hash function to replace pyhash.fnv1_32()"""
+    return hash(s) & 0x7FFFFFFF  # Return positive 32-bit integer
+
 logger = logging.getLogger(__name__)
 
 
