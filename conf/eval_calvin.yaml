@@ -6,7 +6,7 @@ eval_cfg_overwrite:
   model:
     num_sampling_steps: ${num_sampling_steps}
 
-train_folder: /home/troth/code/hiwi/iTRAP/iTRAP/models/flower_vla_calvin/pretrained/finetuned_calvin_abc/seed_42/saved_models/epoch=09_eval_lh
+train_folder: /home/troth/code/hiwi/iTRAP/iTRAP/models/flower_vla_calvin/pretrained/finetuned_calvin_abc/seed_42/saved_models/epoch=24_eval_lh
 checkpoint: ${train_folder}/model_cleaned.safetensors
 device: 0
 

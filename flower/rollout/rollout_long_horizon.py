@@ -312,7 +312,7 @@ class RolloutLongHorizon(Callback):
 
         # get trajectory points & actions from initial state of scene & robot (static camera image untransformed as render() used instead of get_obs())
         untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
-        vlm_response = query_vlm(untransformed_static_img, vlm_client, subtask)
+        vlm_response = query_vlm(untransformed_static_img, vlm_client, goal["lang_text"])
         traj_gripper_points, traj_gripper_actions = extract_gripper_points_and_actions(vlm_response, untransformed_static_img.shape[0], untransformed_static_img.shape[1],
                                                                                        error_logger=log_print, stretch_factor=self.traj_stretch_factor)
 
@@ -333,7 +333,7 @@ class RolloutLongHorizon(Callback):
             if step == self.ep_len / 2:
                 # query_vlm again to help robot out of possibly wrong state
                 untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
-                vlm_response = query_vlm(untransformed_static_img, vlm_client, subtask)
+                vlm_response = query_vlm(untransformed_static_img, vlm_client, goal["lang_text"])
                 traj_gripper_points, traj_gripper_actions = extract_gripper_points_and_actions(vlm_response, untransformed_static_img.shape[0], untransformed_static_img.shape[1],
                                                                                                error_logger=log_print, stretch_factor=self.traj_stretch_factor)
             
