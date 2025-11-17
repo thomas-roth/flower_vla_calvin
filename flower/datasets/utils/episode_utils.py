@@ -148,13 +148,11 @@ def process_vision_language(episode: Dict[str, np.ndarray], transforms: Dict, wi
     seq_vis_lang = {"vis_image_static": torch.empty(0), "vis_image_gripper": torch.empty(0), "lang": torch.empty(0), "lang_text": ""}
     if with_vis_lang:
         vis_image_static = torch.from_numpy(episode["vision_image_static"]).float().permute(0, 3, 1, 2) # (B, H, W, C) -> (B, C, H, W)
-        if "rgb_static_traj" in transforms:
-            vis_image_static = transforms["rgb_static_traj"](vis_image_static)
+        vis_image_static = transforms["rgb_static"](vis_image_static)
         seq_vis_lang["vis_image_static"] = vis_image_static
 
         vis_image_gripper = torch.from_numpy(episode["vision_image_gripper"]).float().permute(0, 3, 1, 2) # (B, H, W, C) -> (B, C, H, W)
-        if "rgb_gripper_traj" in transforms:
-            vis_image_gripper = transforms["rgb_gripper_traj"](vis_image_gripper)
+        vis_image_gripper = transforms["rgb_gripper"](vis_image_gripper)
         seq_vis_lang["vis_image_gripper"] = vis_image_gripper
 
         lang = torch.from_numpy(episode["language"]).float()
