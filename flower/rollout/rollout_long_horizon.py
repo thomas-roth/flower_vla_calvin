@@ -16,7 +16,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 sys.path.append(str(Path(__file__).absolute().parents[5]))
-from iTRAP.evaluation.utils import setup_vlm_client, query_vlm, extract_gripper_points_and_actions, draw_trajectory_onto_image, save_trajectory_image
+from iTRAP.models.Qwen3_VL.utils import setup_vlm_client, query_vlm, extract_gripper_points_and_actions, draw_trajectory_onto_image, save_trajectory_image
 from flower.evaluation.multistep_sequences import get_sequences
 from flower.evaluation.utils import get_env_state_for_initial_condition, join_vis_lang, LangEmbeddings
 from flower.rollout.rollout_video import RolloutVideo
@@ -139,10 +139,14 @@ class RolloutLongHorizon(Callback):
         self.traj_stretch_factor = traj_stretch_factor
 
         complete_calvin_cfg = hydra.compose(config_name="config_calvin")
-        val_transforms_cfg = complete_calvin_cfg.datamodule.transforms.val.rgb_static
-        self.val_transforms = []
-        for val_transform_cfg in val_transforms_cfg:
-            self.val_transforms.append(hydra.utils.instantiate(val_transform_cfg))
+        val_transforms_cfg_static = complete_calvin_cfg.datamodule.transforms.val.rgb_static
+        self.val_transforms_static = []
+        for val_transform_cfg_static in val_transforms_cfg_static:
+            self.val_transforms_static.append(hydra.utils.instantiate(val_transform_cfg_static))
+        val_transforms_cfg_gripper = complete_calvin_cfg.datamodule.transforms.val.rgb_gripper
+        self.val_transforms_gripper = []
+        for val_transform_cfg_gripper in val_transforms_cfg_gripper:
+            self.val_transforms_gripper.append(hydra.utils.instantiate(val_transform_cfg_gripper))
 
     def on_validation_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Called when the validation loop begins."""
@@ -312,7 +316,8 @@ class RolloutLongHorizon(Callback):
 
         # get trajectory points & actions from initial state of scene & robot (static camera image untransformed as render() used instead of get_obs())
         untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
-        vlm_response = query_vlm(untransformed_static_img, vlm_client, subtask)
+        untransformed_gripper_img = self.env.cameras[1].render()[0].squeeze()
+        vlm_response = query_vlm(untransformed_static_img, untransformed_gripper_img, vlm_client, subtask)
         traj_gripper_points, traj_gripper_actions = extract_gripper_points_and_actions(vlm_response, untransformed_static_img.shape[0],
                                                                                        untransformed_static_img.shape[1], logger=log_print,
                                                                                        stretch_factor=self.traj_stretch_factor)
@@ -334,7 +339,8 @@ class RolloutLongHorizon(Callback):
             if step == self.ep_len / 2:
                 # query_vlm again to help robot out of possibly wrong state
                 untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
-                vlm_response = query_vlm(untransformed_static_img, vlm_client, subtask)
+                untransformed_gripper_img = self.env.cameras[1].render()[0].squeeze()
+                vlm_response = query_vlm(untransformed_static_img, untransformed_gripper_img, vlm_client, subtask)
                 traj_gripper_points, traj_gripper_actions = extract_gripper_points_and_actions(vlm_response, untransformed_static_img.shape[0],
                                                                                                untransformed_static_img.shape[1], logger=log_print,
                                                                                                stretch_factor=self.traj_stretch_factor)
@@ -344,13 +350,20 @@ class RolloutLongHorizon(Callback):
                 untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
                 untransformed_static_traj_img = draw_trajectory_onto_image(untransformed_static_img, traj_gripper_points, traj_gripper_actions)
                 #save_trajectory_image(untransformed_static_traj_img, subtask, local_rank, seq_nr, subtask_nr, step)
+                untransformed_gripper_img = self.env.cameras[1].render()[0].squeeze()
+                untransformed_gripper_traj_img = untransformed_gripper_img.copy() # TODO: implement transform from static to gripper cam
+                #save_trajectory_image(untransformed_gripper_traj_img, subtask, local_rank, seq_nr, subtask_nr, step)
 
-                # apply transforms to trajectory image
+                # apply transforms to trajectory images
                 transformed_static_traj_img = torch.tensor(untransformed_static_traj_img).permute(2, 0, 1).unsqueeze(0)
-                for val_transform in self.val_transforms:
-                    transformed_static_traj_img = val_transform(transformed_static_traj_img)
-                obs["rgb_obs"]["rgb_static"] = transformed_static_traj_img.unsqueeze(0).to(self.device)
-
+                for val_transform_static in self.val_transforms_static:
+                    transformed_static_traj_img = val_transform_static(transformed_static_traj_img)
+                obs["vis_image_static"] = transformed_static_traj_img.unsqueeze(0).to(self.device)
+                transformed_gripper_traj_img = torch.tensor(untransformed_gripper_traj_img).permute(2, 0, 1).unsqueeze(0)
+                for val_transform_gripper in self.val_transforms_gripper:
+                    transformed_gripper_traj_img = val_transform_gripper(transformed_gripper_traj_img)
+                obs["vis_image_gripper"] = transformed_gripper_traj_img.unsqueeze(0).to(self.device)
+            
             action = model.step(obs, goal)
             # print(action.shape)
             obs, _, _, current_info = self.env.step(action)

@@ -102,5 +102,5 @@ if __name__ == "__main__":
                         handlers=[logging.StreamHandler()])
     logger = logging.getLogger(__name__)
 
-    clean_and_save_model(logger, path_to_ckpt_file_or_dir=None,
+    clean_and_save_model(logger, path_to_ckpt_file_or_dir="/home/troth/code/hiwi/iTRAP/iTRAP/models/flower_vla_calvin/pretrained/finetuned_calvin_abc_both_cams/16-33-50_seed42/seed_42/saved_models",
                          delete_ckpt=True)
