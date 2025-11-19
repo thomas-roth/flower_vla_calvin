@@ -163,15 +163,17 @@ def get_default_model_and_env(train_folder, dataset_path, checkpoint, env=None, 
 
 def get_default_mode_and_env(train_folder, dataset_path, checkpoint, env=None, lang_embeddings=None, prep_dm_and_deps=True, device_id=0, eval_cfg_overwrite={}):
     # Fix for the path issue - ensure we're working with the directory containing the config
-    train_folder_path = Path(train_folder)
-    
-    # If the train_folder is already pointing to a .yaml file, use its parent directory
-    if train_folder_path.suffix == '.yaml':
-        train_folder_path = train_folder_path.parent.parent  # Go up two levels from config.yaml
-    
-    # Now construct the correct path to the config.yaml file
-    train_cfg_path = train_folder_path / ".hydra/config.yaml"
+    base_train_folder_path = Path(train_folder)
+    if base_train_folder_path.suffix == '.yaml':
+        base_train_folder_path = base_train_folder_path.parent.parent
+    elif not (base_train_folder_path / ".hydra/config.yaml").exists():
+        base_train_folder_path = base_train_folder_path.parent.parent.parent
+        
+    train_cfg_path = base_train_folder_path / ".hydra/config.yaml"
     train_cfg_path = format_sftp_path(train_cfg_path)
+
+    if not Path(train_cfg_path).exists():
+        raise FileNotFoundError(f"Could not find config file at {train_cfg_path}")
     
     print(f"Loading config from: {train_cfg_path}")
     
