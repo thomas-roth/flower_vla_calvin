@@ -17,7 +17,7 @@ action_dim: 7
 act_window_size: 10
 
 # pretraining stuff
-load_pretrained: True
+load_pretrained: False
 pretrained_model_path: /home/hk-project-p0024638/uruox/code/iTRAP/iTRAP/models/flower_vla_calvin/pretrained/flower_calvin_abc/model.safetensors #/home/hk-project-p0024638/uruox/code/iTRAP/iTRAP/models/flower_vla_calvin/pretrained/flower_vla_pret/360000_model_weights.pt
 # /home/hk-project-sustainebot/ft4740/code/flower_vla/logs/runs/2025-02-19/11-15-41/200000_model_weights.pt
 # /home/hk-project-sustainebot/ft4740/code/flower_vla_policy/logs/runs/2025-02-05/10-17-02/360000_model_weights.pt joint + delta pret
@@ -31,15 +31,22 @@ use_adaln_cond: false
 use_readout_token: false
 use_proprio: false
 return_act_chunk: false
+use_early_cross_fusion: True
 
 # DiT Configuration
 sampling_type: uniform
+use_diffusion_forcing: False
+df_delta: 1
 dit_dim: 1024
 n_heads: 16
-n_layers: 18
+n_layers: 12
 attn_pdrop: 0.1
 resid_pdrop: 0.1
 mlp_pdrop: 0.1
+
+share_cross_attn_layers: True
+share_self_attn_layers: False
+share_mlp_layers: False
 
 # RoPE Configuration
 use_rope: true
@@ -65,3 +72,6 @@ lr_scheduler:
     total_steps: 50000
     phase_ratio: "(0.05, 0.1, 0.85)"
     lr: 2e-5
+
+
+# TODO: increase batch size to 16

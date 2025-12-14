@@ -27,7 +27,10 @@ from flower.models.networks.transformers import (
     ActionSpaceEmbedderParameter,
     ZeroEncoder,
     FlowBlock, 
-    stateless_norm
+    stateless_norm,
+    FlowerAttention,
+    FlowerCrossAttention,
+    SwiGlu
 )
 from flower.utils.lr_schedulers.tri_stage_scheduler import TriStageLRScheduler
 from flower.callbacks.ema import EMA
@@ -64,6 +67,8 @@ class FLOWERVLA(pl.LightningModule):
         return_act_chunk: bool = False,
         
         # DiT Configuration
+        use_diffusion_forcing: bool = True,
+        df_delta: int = 5,
         sampling_type: str = 'ln',
         dit_dim: int = 512,
         n_heads: int = 16,
@@ -71,7 +76,10 @@ class FLOWERVLA(pl.LightningModule):
         attn_pdrop: float = 0.1,
         resid_pdrop: float = 0.1,
         mlp_pdrop: float = 0.1,
-        
+        use_early_cross_fusion: bool = True,
+        share_cross_attn_layers: bool = False,
+        share_self_attn_layers: bool = False,
+        share_mlp_layers: bool = False,
         # RoPE Configuration
         use_rope: bool = False,
         use_nope: bool = False,
@@ -106,7 +114,12 @@ class FLOWERVLA(pl.LightningModule):
             use_proprio=use_proprio,
             return_act_chunk=return_act_chunk,
             second_view_key=second_view_key,
+            use_early_cross_fusion=use_early_cross_fusion,
+            share_cross_attn_layers=share_cross_attn_layers,
+            share_self_attn_layers=share_self_attn_layers,
+            share_mlp_layers=share_mlp_layers,
         )
+        self.df_delta = df_delta
         self.obs_modalities = []
         # Initialize model dimensions
         self._init_dimensions(
@@ -152,6 +165,7 @@ class FLOWERVLA(pl.LightningModule):
         self.optimizer_config = optimizer
         self.lr_scheduler_config = lr_scheduler
         self.optimizer_type = optimizer_type
+        self.use_diffusion_forcing = use_diffusion_forcing
 
         if load_pretrained and pretrained_model_path is not None:
             self._load_pretrained_weights(pretrained_model_path)
@@ -159,37 +173,83 @@ class FLOWERVLA(pl.LightningModule):
     def _load_pretrained_weights(self, pretrained_model_path: str, mean_resizing: bool = False):
         """Loads pretrained weights, handling key mismatches (e.g., different prefixes)."""
         print(f"Loading pretrained weights from {pretrained_model_path}...")
-
-        # Load checkpoint
-        if os.path.isdir(pretrained_model_path):
-            model_files = [file for file in os.listdir(pretrained_model_path) if file.endswith('.safetensors') or file.endswith('.bin') or file.endswith('.pt') or file.endswith('.ckpt')]
-            if any(file.endswith('.safetensors') for file in model_files):
-                # Prefer safetensors if available
-                pretrained_model_path = os.path.join(pretrained_model_path, next(file for file in model_files if file.endswith('.safetensors')))
-            else:
-                # Fallback to pytorch_model.bin or any other file
-                pretrained_model_path = os.path.join(pretrained_model_path, model_files[0])
-        elif pretrained_model_path.endswith(".safetensors"):
+        # Determine file type and load accordingly
+        if pretrained_model_path.endswith('.safetensors'):
+            # Load safetensors file
             from safetensors.torch import load_file
-            checkpoint = load_file(pretrained_model_path, device=str(self.device))
+            state_dict = load_file(pretrained_model_path, device=str(self.device))
+            checkpoint = {"state_dict": state_dict}  # Create checkpoint-like structure for compatibility
+            print("Loaded safetensors file")
         else:
-            checkpoint = torch.load(pretrained_model_path, map_location=self.device, weights_only=False)
-
+            # Load PyTorch checkpoint (.pt, .pth, .ckpt)
+            checkpoint = torch.load(pretrained_model_path, map_location=self.device)
+            # Extract the state dict (handle PyTorch Lightning or plain models)
+            state_dict = checkpoint.get("state_dict", checkpoint)
 
         # Extract the state dict (handle PyTorch Lightning or plain models)
         state_dict = checkpoint.get("state_dict", checkpoint)
 
+        if ("callbacks" in checkpoint and 
+                "EMA" in checkpoint["callbacks"] and 
+                "ema_weights" in checkpoint["callbacks"]["EMA"]):
+                
+                print("Found EMA weights in checkpoint, attempting to load them...")
+                ema_weights_list = checkpoint['callbacks']['EMA']['ema_weights']
+                
+                # Get the original state dict to use as a reference for parameter names and shapes
+                original_state_dict = checkpoint.get("state_dict", checkpoint)
+                
+                # Create a new state dict by matching EMA weights with original parameter names
+                state_dict = {}
+                ema_idx = 0
+                
+                for param_name, original_param in original_state_dict.items():
+                    if ema_idx < len(ema_weights_list):
+                        ema_weight = ema_weights_list[ema_idx]
+                        
+                        # Check if shapes match
+                        if ema_weight.shape == original_param.shape:
+                            state_dict[param_name] = ema_weight
+                            ema_idx += 1
+                        else:
+                            # Shape mismatch - try to find the correct EMA weight by shape
+                            found_match = False
+                            for temp_idx in range(ema_idx, min(ema_idx + 20, len(ema_weights_list))):
+                                if ema_weights_list[temp_idx].shape == original_param.shape:
+                                    state_dict[param_name] = ema_weights_list[temp_idx]
+                                    # Swap to maintain order
+                                    ema_weights_list[temp_idx], ema_weights_list[ema_idx] = ema_weights_list[ema_idx], ema_weights_list[temp_idx]
+                                    ema_idx += 1
+                                    found_match = True
+                                    break
+                            
+                            if not found_match:
+                                # If no match found, use original parameter
+                                print(f"Warning: No matching EMA weight found for {param_name}, using original")
+                                state_dict[param_name] = original_param
+                    else:
+                        # No more EMA weights available, use original
+                        print(f"Warning: Ran out of EMA weights at {param_name}, using original")
+                        state_dict[param_name] = original_param
+                
+                print(f"Successfully matched {ema_idx} EMA weights out of {len(ema_weights_list)} total")
+
         # Fix key mismatches: remove 'agent.' prefix if it exists
         new_state_dict = {}
+        # Handle language encoder/model naming mismatch
         for key, value in state_dict.items():
             new_key = key.replace("agent.", "")  # Remove 'agent.' if it exists
-            new_key = new_key.replace("mlp.c_", "mlp.")  # Fix MLP keys
-            new_key = new_key.replace("language_encoder", "language_model.model.encoder") # Fix VLM encoder keys
-            new_key = new_key.replace("language_final_logits_bias", "language_model.final_logits_bias") # Fix VLM logits bias keys
-            new_key = new_key.replace("language_shared", "language_model.model.shared") # Fix VLM shared keys
+            
+            # Handle language encoder/model naming mismatch
+            if "vlm.language_encoder." in new_key:
+                new_key = new_key.replace("vlm.language_encoder.", "vlm.language_model.model.encoder.")
+            elif "vlm.language_model." in new_key and "vlm.language_model.model." not in new_key:
+                # If it's already language_model but missing the nested structure, add it
+                new_key = new_key.replace("vlm.language_model.", "vlm.language_model.model.encoder.")
+                
             new_state_dict[new_key] = value
 
-        # Load the weights, allowing partial matches
+        # Load the state dict with strict=False to handle mismatches
         missing_keys, unexpected_keys = self.load_state_dict(new_state_dict, strict=False)
 
         # Log mismatches for debugging
@@ -304,6 +364,31 @@ class FLOWERVLA(pl.LightningModule):
         if not use_rope and not use_nope:
             self.positional_encoding = nn.Parameter(torch.randn(1, kwargs['act_window_size'], dit_dim) * 0.1)
 
+        shared_self_attn = None
+        shared_cross_attn = None
+        shared_mlp = None
+
+        if self.share_self_attn_layers:
+            shared_self_attn = FlowerAttention(
+                dim=dit_dim, n_heads=n_heads,
+                attn_pdrop=kwargs['attn_pdrop'], 
+                resid_pdrop=kwargs['resid_pdrop'],
+                use_rope=use_rope, 
+                max_seq_len=kwargs['query_seq_len'], 
+                rope_theta=kwargs['rope_theta']
+            )
+        if self.share_cross_attn_layers:
+            shared_cross_attn = FlowerCrossAttention(
+                dim=dit_dim, n_heads=n_heads,
+                attn_pdrop=kwargs['attn_pdrop'], 
+                resid_pdrop=kwargs['resid_pdrop'],
+                use_rope=use_rope, 
+                query_seq_len=kwargs['query_seq_len'], 
+                rope_theta=kwargs['rope_theta']
+            )
+        if self.share_mlp_layers:
+            shared_mlp = SwiGlu(dit_dim, dropout=kwargs['mlp_pdrop'])
+        
         # DiT blocks
         self.dit = nn.ModuleList([
             FlowBlock(
@@ -318,6 +403,15 @@ class FLOWERVLA(pl.LightningModule):
 
             ) for _ in range(n_layers)
         ])
+
+        for block in self.dit:
+            if shared_self_attn is not None:
+                block.self_attn = shared_self_attn
+            if shared_cross_attn is not None:
+                block.cross_attn = shared_cross_attn
+            if shared_mlp is not None:
+                block.mlp = shared_mlp
+        
 
         # Create components per action space
         for action_name, action_idx in self.action_space_index.action_spaces.items():
@@ -404,21 +498,6 @@ class FLOWERVLA(pl.LightningModule):
         # Log metrics
         self._log_training_metrics(total_loss, action_loss, total_bs)
 
-        # Optimization step
-        # opt.zero_grad()
-        # self.manual_backward(action_loss)
-        
-        # Clip gradients
-         #torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
-        
-        # Step optimizer
-         #opt.step()
-
-        # Update learning rate
-         #sch = self.lr_schedulers()
-         #if sch is not None:
-        #     sch.step()
-
         return action_loss
 
     def validation_step(self, batch: Dict[str, Dict], batch_idx: int) -> Dict[str, torch.Tensor]:
@@ -451,34 +530,55 @@ class FLOWERVLA(pl.LightningModule):
         
         if len(actions.shape) == 4:
             actions = actions.squeeze(1)
-        b = actions.size(0)
+        b, t = actions.size(0), actions.size(1)
         device = actions.device
         actions = actions.to(default_dtype)
 
         # Sample time based on sampling strategy
-        if self.sampling_type == "pi_zero":
-            alpha, beta = 1.5, 1.0
-            t = torch.distributions.Beta(alpha, beta).sample((b,)).to(device)
-            t = t.clamp(max=0.999)
-        elif self.sampling_type == "ln":
-            t = torch.sigmoid(torch.randn((b,), device=device))
-            t = t.clamp(max=0.999).to(default_dtype)
-        elif self.sampling_type == "uniform":
-            eps = 1e-5
-            t = (torch.rand(1, device=device) + torch.arange(b, device=device) / b) % (1 - eps)
-            t = t.to(default_dtype)
+        if self.use_diffusion_forcing:
+            # We treat a sequence of actions with different noise levels per group
+            assert t % self.df_delta == 0, f"Sequence length {t} must be divisible by df_delta {self.df_delta}"
+            n_groups = t // self.df_delta  # Number of groups (e.g., 60/10 = 6 groups)
+            
+            # Sample noise levels for each group
+            if self.sampling_type == "pi_zero":
+                alpha, beta = 1.5, 1.0
+                t_vals = torch.distributions.Beta(alpha, beta).sample((b, n_groups)).to(device).clamp(max=0.999)
+            elif self.sampling_type == "ln":
+                t_vals = torch.sigmoid(torch.randn((b, n_groups), device=device)).clamp(max=0.999).to(default_dtype)
+            elif self.sampling_type == "uniform":
+                eps = 1e-5
+                t_vals = (torch.rand((b, n_groups), device=device) * (1 - eps)).to(default_dtype)
+            else:
+                raise NotImplementedError(f"Sampling type {self.sampling_type} not implemented")
+            
+            # Expand t_vals to match action dimensions
+            # Shape: (b, n_groups) -> (b, t) by repeating each group value df_delta times
+            t_vals = t_vals.repeat_interleave(self.df_delta, dim=1)  # (b, t)
+            texp = t_vals.view([b, t] + [1] * (actions.dim() - 2))  # (b, t, 1, ...)
         else:
-            raise NotImplementedError(f"Sampling type {self.sampling_type} not implemented")
+            # Original logic for non-diffusion forcing
+            if self.sampling_type == "pi_zero":
+                alpha, beta = 1.5, 1.0
+                t_vals = torch.distributions.Beta(alpha, beta).sample((b,)).to(device).clamp(max=0.999)
+            elif self.sampling_type == "ln":
+                t_vals = torch.sigmoid(torch.randn((b,), device=device)).clamp(max=0.999).to(default_dtype)
+            elif self.sampling_type == "uniform":
+                eps = 1e-5
+                t_vals = (torch.rand(1, device=device) + torch.arange(b, device=device) / b) % (1 - eps)
+                t_vals = t_vals.to(default_dtype)
+            else:
+                raise NotImplementedError(f"Sampling type {self.sampling_type} not implemented")
+            
+            texp = t_vals.view([b] + [1] * (actions.dim() - 1))
 
-        # Interpolate between actions and noise
-        texp = t.view([b] + [1] * (actions.dim() - 1))
         z1 = torch.randn_like(actions, device=device).to(default_dtype)
 
         # Interpolate
         zt = (1 - texp) * actions + texp * z1
 
         # Forward pass
-        vtheta = self.dit_forward(zt, t, cond)
+        vtheta = self.dit_forward(zt, t_vals, cond)
         # Compute loss on valid dimensions only
         diff = (z1 - actions) - vtheta
         valid_diff = diff
@@ -524,7 +624,10 @@ class FLOWERVLA(pl.LightningModule):
         B, t_seq, d = z.shape
         
         # Get conditioning information
-        cond = cond_dict['features'].to(default_dtype)
+        if self.use_early_cross_fusion:
+            cond = [features.to(default_dtype) for features in cond_dict['features']]
+        else:
+            cond = cond_dict['features'].to(default_dtype)
         frequency_embeds = cond_dict['frequency_embeds'].squeeze(1).to(default_dtype)
         action_type = cond_dict['action_type'].to(self.device)
         
@@ -543,11 +646,20 @@ class FLOWERVLA(pl.LightningModule):
             z = z + self.positional_encoding
         
         # Process embeddings
-        t_emb = stateless_norm(self.t_embedder(t)) + \
-                stateless_norm(frequency_embeds).squeeze(1) + \
-                stateless_norm(proprio_embeds).squeeze(1)
+        t_embed = self.t_embedder(t)
+        if len(t_embed.shape) == 2:
+            t_emb = stateless_norm(t_embed) + \
+                    stateless_norm(frequency_embeds).squeeze(1) + \
+                    stateless_norm(proprio_embeds).squeeze(1)
+        else:
+            t_emb = stateless_norm(t_embed) + \
+                    stateless_norm(frequency_embeds) + \
+                    stateless_norm(proprio_embeds)
         
-        cond = self.cond_linear(self.cond_norm(cond))
+        if self.use_early_cross_fusion:
+            cond = [self.cond_linear(self.cond_norm(cond)) for cond in cond]
+        else:
+            cond = self.cond_linear(self.cond_norm(cond))
         
         # Set up conditioning
         if self.use_adaln_cond:
@@ -566,16 +678,29 @@ class FLOWERVLA(pl.LightningModule):
         else:
             global_adaln = self.action_specific_adaln(global_cond, action_type)
         
-
         # Process through DiT blocks
-        for layer in self.dit:
-            cx = layer(
-                cx, 
-                global_cond, 
-                context=context, 
-                is_causal=True, 
-                global_adaln=global_adaln
-            )
+        if self.use_early_cross_fusion:
+            for idx, layer in enumerate(self.dit):
+                if len(context) <= idx:
+                    intermed_context = context[-1]
+                else:
+                    intermed_context = context[idx]
+                cx = layer(
+                    cx, 
+                    global_cond, 
+                    context=intermed_context, 
+                    is_causal=True, 
+                    global_adaln=global_adaln
+                )
+        else:
+            for layer in self.dit:
+                cx = layer(
+                    cx, 
+                    global_cond, 
+                    context=context, 
+                    is_causal=True, 
+                    global_adaln=global_adaln
+                )
             
         # Decode and return
         return self.decode_actions(cx, action_type, valid_dims)
@@ -643,27 +768,27 @@ class FLOWERVLA(pl.LightningModule):
         device = self.device
         default_type = next(self.parameters()).dtype
 
-        primary_image = batch["vis_image_static"]
-        secondary_image = batch["vis_image_gripper"]
+        primary_image_tensor = batch["vis_image_static"]    
         
-        embed_tensor = torch.zeros(len(primary_image), 1, 1)
-        action_type_tensor = torch.ones(len(primary_image), self.act_window_size, 7)
+        embed_tensor = torch.zeros(len(primary_image_tensor), 1, 1)
+        action_type_tensor = torch.ones(len(primary_image_tensor), self.act_window_size, 7)
         # Process primary image
-        B, T, C, H, W = primary_image.shape
+        B, T, C, H, W = primary_image_tensor.shape
         
         # Extract visual features
         image_features = self.vlm._encode_image(
-            primary_image.view(-1, C, H, W).to(device).to(default_type)
+            primary_image_tensor.view(-1, C, H, W).to(device).to(default_type)
         ).to(default_type)
         image_features = image_features.view(B, T * image_features.shape[1], -1)
         
         # Process second view if enabled
         if self.use_second_view:
-            image2_features = self.vlm._encode_image(
-                secondary_image.view(-1, C, H, W).to(device).to(default_type)
+            secondary_image_tensor = batch["vis_image_gripper"]
+            secondary_image_features = self.vlm._encode_image(
+                secondary_image_tensor.view(-1, C, H, W).to(device).to(default_type)
             ).to(default_type)
-            image2_features = image2_features.view(B, T * image2_features.shape[1], -1)
-            image_features = torch.cat([image_features, image2_features], dim=1)
+            secondary_image_features = secondary_image_features.view(B, T * secondary_image_features.shape[1], -1)
+            image_features = torch.cat([image_features, secondary_image_features], dim=1)
         
         # Get text embeddings
         # Get text embeddings once to reuse
@@ -684,13 +809,21 @@ class FLOWERVLA(pl.LightningModule):
         attention_mask = torch.ones(merged_embeds.shape[:2], device=merged_embeds.device)
         
         # Process through encoder
-        features = self.vlm.get_encoder()(
-            inputs_embeds=merged_embeds,
-            attention_mask=attention_mask
-        ).last_hidden_state
+        if self.use_early_cross_fusion:
+            features = self.vlm.get_encoder()(
+                inputs_embeds=merged_embeds,
+                attention_mask=attention_mask,
+                output_hidden_states=True
+            )['hidden_states']
+            # ['hidden_states']
+        else:
+            features = self.vlm.get_encoder()(
+                inputs_embeds=merged_embeds,
+                attention_mask=attention_mask
+            ).last_hidden_state
 
-        # Apply dropout 
-        features = self.vlm_token_dropout(features)
+            # Apply dropout 
+            features = self.vlm_token_dropout(features)
 
         # Prepare frequency and action space embeddings
         frequency_embeds = self.frequency_embedder(
@@ -746,7 +879,7 @@ class FLOWERVLA(pl.LightningModule):
                 decoded = pred
         return decoded
 
-    def forward(self, obs_batch: Dict, goal: Dict) -> torch.Tensor:
+    def forward(self, obs: Dict, goal: Dict) -> torch.Tensor:
         """
         Forward pass for inference.
         
@@ -757,17 +890,27 @@ class FLOWERVLA(pl.LightningModule):
         Returns:
             Predicted action sequence
         """
-        # Create batch for observation encoding
-        obs_batch["lang_text"] = [goal["lang_text"]]
+        vis_image_static = obs["vis_image_static"]
+        vis_image_gripper = obs["vis_image_gripper"]
 
-        features = self.encode_observations(obs_batch)
+        # Create batch for observation encoding
+        batch = {
+            "vis_image_static": vis_image_static,
+            "vis_image_gripper": vis_image_gripper,
+            "lang_text": [goal["lang_text"]]
+        }
+        features = self.encode_observations(batch)
         
+        if self.use_early_cross_fusion:
+            device = features['features'][0].device
+        else:
+            device = features['features'].device
         # Generate initial noise
         noise = torch.randn(
-            len(features['features']),
+            len(vis_image_static),
             self.act_window_size,
             self.action_dim,
-            device=features['features'].device
+            device=device
         )
         
         # Sample actions
