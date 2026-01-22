@@ -64,7 +64,7 @@ def get_model_checkpoint_paths(logger, path_to_ckpt_file_or_dir=None):
     return model_checkpoint_paths
 
 
-def clean_and_save_model(logger, path_to_ckpt_file_or_dir=None, delete_ckpt=True):
+def clean_and_save_model(logger, path_to_ckpt_file_or_dir=None, delete_ckpt=False):
     model_checkpoint_paths = get_model_checkpoint_paths(logger, path_to_ckpt_file_or_dir)
     if model_checkpoint_paths is None:
         return
