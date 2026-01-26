@@ -6,7 +6,7 @@ defaults:
   - override hydra/hydra_logging: colorlog
 
 root_data_dir: /DATA/calvin/task_ABC_D #${oc.env:TMPDIR}/data/task_ABC_D #/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/data/task_ABC_D
-vis_lang_folder: /home/troth/data/iTRAP-flower/calvin_policy_dataset/2026-01-07_16-03-11_both-cams_thinner/vis_lang_clip_resnet50 #${oc.env:TMPDIR}/data/vis_lang_clip_resnet50 #/home/hk-project-p0024638/uruox/data/iTRAP-FLOWER/calvin_policy_dataset/both_cams/vis_lang_clip_resnet50
+vis_lang_folder: /DATA/troth/iTRAP/data/calvin_policy_dataset/2026-01-07_16-03-11_both-cams_thinner/vis_lang_clip_resnet50 #${oc.env:TMPDIR}/data/vis_lang_clip_resnet50 #/home/hk-project-p0024638/uruox/data/iTRAP-FLOWER/calvin_policy_dataset/both_cams/vis_lang_clip_resnet50
 
 log_dir: /home/troth/code/hiwi/iTRAP/outputs/itrap #${oc.env:TMPDIR}/logs #/home/hk-project-p0024638/uruox/code/iTRAP/logs
 slurm: false
