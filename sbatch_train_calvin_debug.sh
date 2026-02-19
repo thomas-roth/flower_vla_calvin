@@ -10,7 +10,7 @@
 #SBATCH --ntasks-per-node=4         # Number of tasks per node
 #SBATCH --gres=gpu:4                # Number of GPUs
 #SBATCH -c 4                        # Number of cores per task
-#SBATCH -t 00:30:00 ## 12:00:00     # 06:00:00 # 1-00:30:00 # 2-00:00:00
+#SBATCH -t 00:30:00                 # 06:00:00 # 1-00:30:00 # 2-00:00:00
 
 # -------------------------------
 
