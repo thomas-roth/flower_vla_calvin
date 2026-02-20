@@ -32,6 +32,7 @@ from flower.models.networks.transformers import (
 from flower.utils.lr_schedulers.tri_stage_scheduler import TriStageLRScheduler
 from flower.callbacks.ema import EMA
 from flower.models.utils import ActionIndex, generate_policy_prompt
+from flower.utils.untransform_img import untransform, plot_tensor # TMP
 
 logger = logging.getLogger(__name__)
 
@@ -645,6 +646,15 @@ class FLOWERVLA(pl.LightningModule):
 
         primary_image = batch["vis_image_static"]
         secondary_image = batch["vis_image_gripper"]
+        
+        # TMP
+        plot_tensor(primary_image[0, 0].to(torch.uint8), save_path="first_img_trans.png")
+        first_image_untrans = untransform(primary_image, cam="static")
+        plot_tensor(first_image_untrans, save_path="first_img_untrans.png")
+        plot_tensor(secondary_image[0, 0].to(torch.uint8), save_path="second_img_trans.png")
+        secondary_image_untrans = untransform(secondary_image, cam="gripper")
+        plot_tensor(secondary_image_untrans, save_path="second_img_untrans.png")
+        return
         
         embed_tensor = torch.zeros(len(primary_image), 1, 1)
         action_type_tensor = torch.ones(len(primary_image), self.act_window_size, 7)
