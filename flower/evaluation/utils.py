@@ -236,24 +236,23 @@ def load_mode_from_safetensor(
     """
     filepath = Path(filepath)
     
-    # Determine if we're dealing with a file or directory
+    # Determine if we're dealing with a file or dir
     if filepath.is_file():
-        # If it's a checkpoint file, use its parent directory to find the config
+        # If it's a checkpoint file, use its parent dir to find the config
         ckpt_path = filepath
         config_dir = filepath.parent
         
-        # Try to find config in parent directories
+        # Try to find .hydra config in parent dirs
         hydra_dir = None
-        current_dir = config_dir
-        for _ in range(3):  # Look up to 3 levels up
-            if (current_dir / ".hydra").exists():
-                hydra_dir = current_dir / ".hydra"
+        for _ in range(4):  # Look up to 3 levels up
+            if (config_dir / ".hydra").exists():
+                hydra_dir = config_dir / ".hydra"
                 break
-            current_dir = current_dir.parent
+            config_dir = config_dir.parent
         
         if hydra_dir is None:
-            # If we can't find .hydra directory, try looking at a common pattern
-            # From the filepath, try to find base directory (e.g., calvin_abcd)
+            # If we can't find .hydra dir, try looking at a common pattern
+            # From the filepath, try to find base dir (e.g., calvin_abcd)
             parts = filepath.parts
             try:
                 # Look for "best_checkpoints" in the path
