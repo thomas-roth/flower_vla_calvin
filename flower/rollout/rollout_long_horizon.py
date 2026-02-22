@@ -318,7 +318,7 @@ class RolloutLongHorizon(Callback):
         untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
         untransformed_gripper_img = self.env.cameras[1].render()[0].squeeze()
         vlm_response = query_vlm(untransformed_static_img, untransformed_gripper_img, vlm_client, subtask)
-        traj_gripper_points, traj_gripper_actions = extract_gripper_points_and_actions(vlm_response, untransformed_static_img.shape[0],
+        traj_gripper_points, traj_gripper_actions, _ = extract_gripper_points_and_actions(vlm_response, untransformed_static_img.shape[0],
                                                                                        untransformed_static_img.shape[1], logger=log_print,
                                                                                        stretch_factor=self.traj_stretch_factor)
 
@@ -341,7 +341,7 @@ class RolloutLongHorizon(Callback):
                 untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
                 untransformed_gripper_img = self.env.cameras[1].render()[0].squeeze()
                 vlm_response = query_vlm(untransformed_static_img, untransformed_gripper_img, vlm_client, subtask)
-                traj_gripper_points, traj_gripper_actions = extract_gripper_points_and_actions(vlm_response, untransformed_static_img.shape[0],
+                traj_gripper_points, traj_gripper_actions, _ = extract_gripper_points_and_actions(vlm_response, untransformed_static_img.shape[0],
                                                                                                untransformed_static_img.shape[1], logger=log_print,
                                                                                                stretch_factor=self.traj_stretch_factor)
             
