@@ -114,7 +114,6 @@ class RolloutLongHorizon(Callback):
         empty_cache,
         val_annotations,
         debug,
-        traj_stretch_factor=1.0
     ):
         super().__init__()
         self.env = None  # type: Any
@@ -136,7 +135,6 @@ class RolloutLongHorizon(Callback):
         self.eval_sequences = None
         self.val_annotations = val_annotations
         self.debug = debug
-        self.traj_stretch_factor = traj_stretch_factor
 
         complete_calvin_cfg = hydra.compose(config_name="config_calvin")
         val_transforms_cfg_static = complete_calvin_cfg.datamodule.transforms.val.rgb_static
@@ -318,9 +316,7 @@ class RolloutLongHorizon(Callback):
         untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
         untransformed_gripper_img = self.env.cameras[1].render()[0].squeeze()
         vlm_response = query_vlm(untransformed_static_img, untransformed_gripper_img, vlm_client, subtask)
-        traj_gripper_points, traj_gripper_actions, _ = extract_gripper_points_and_actions(vlm_response, untransformed_static_img.shape[0],
-                                                                                       untransformed_static_img.shape[1], logger=log_print,
-                                                                                       stretch_factor=self.traj_stretch_factor)
+        traj_gripper_points, traj_gripper_actions = extract_gripper_points_and_actions(vlm_response, logger=log_print)
 
         model.reset()
         start_info = self.env.get_info()
@@ -328,7 +324,7 @@ class RolloutLongHorizon(Callback):
         if record:
             # update video with initial state
             static_img = self.env.cameras[0].render()[0].squeeze()
-            static_traj_img = draw_trajectory_onto_image(static_img, traj_gripper_points, traj_gripper_actions)
+            static_traj_img = draw_trajectory_onto_image(static_img, traj_gripper_points, traj_gripper_actions, self.env)
             normalized_static_traj_img = static_traj_img / 127.5 - 1 # normalize to [-1, 1]
             self.rollout_video.update(torch.tensor(normalized_static_traj_img).permute(2, 0, 1).unsqueeze(0).unsqueeze(1).to(self.device))
         
@@ -341,17 +337,16 @@ class RolloutLongHorizon(Callback):
                 untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
                 untransformed_gripper_img = self.env.cameras[1].render()[0].squeeze()
                 vlm_response = query_vlm(untransformed_static_img, untransformed_gripper_img, vlm_client, subtask)
-                traj_gripper_points, traj_gripper_actions, _ = extract_gripper_points_and_actions(vlm_response, untransformed_static_img.shape[0],
-                                                                                               untransformed_static_img.shape[1], logger=log_print,
-                                                                                               stretch_factor=self.traj_stretch_factor)
-            
+                traj_gripper_points, traj_gripper_actions = extract_gripper_points_and_actions(vlm_response, logger=log_print)
+
             if step % model.multistep == 0:
                 # model predicts multistep actions per step => only draw trajectory once per multistep
                 untransformed_static_img = self.env.cameras[0].render()[0].squeeze()
-                untransformed_static_traj_img = draw_trajectory_onto_image(untransformed_static_img, traj_gripper_points, traj_gripper_actions)
+                untransformed_static_traj_img = draw_trajectory_onto_image(untransformed_static_img, traj_gripper_points, traj_gripper_actions, self.env)
                 #save_trajectory_image(untransformed_static_traj_img, subtask, local_rank, seq_nr, subtask_nr, step)
                 untransformed_gripper_img = self.env.cameras[1].render()[0].squeeze()
-                untransformed_gripper_traj_img = untransformed_gripper_img.copy() # TODO: implement transform from static to gripper cam
+                untransformed_gripper_traj_img = untransformed_gripper_img.copy()
+                untransformed_gripper_traj_img = draw_trajectory_onto_image(untransformed_gripper_traj_img, traj_gripper_points, traj_gripper_actions, self.env)
                 #save_trajectory_image(untransformed_gripper_traj_img, subtask, local_rank, seq_nr, subtask_nr, step)
 
                 # apply transforms to trajectory images
@@ -373,7 +368,7 @@ class RolloutLongHorizon(Callback):
             if record:
                 # update video
                 static_img = self.env.cameras[0].render()[0].squeeze()
-                static_traj_img = draw_trajectory_onto_image(static_img, traj_gripper_points, traj_gripper_actions)
+                static_traj_img = draw_trajectory_onto_image(static_img, traj_gripper_points, traj_gripper_actions, self.env)
                 normalized_static_traj_img = static_traj_img / 127.5 - 1 # normalize to [-1, 1]
                 self.rollout_video.update(torch.tensor(normalized_static_traj_img).permute(2, 0, 1).unsqueeze(0).unsqueeze(1).to(self.device))
             # check if current step solves a task
