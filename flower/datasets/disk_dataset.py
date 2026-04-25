@@ -56,7 +56,7 @@ class DiskDataset(BaseDataset):
         self.skip_frames = skip_frames
 
         if self.with_vis_lang:
-            self.episode_lookup, self.vis_lang_lookup, self.vis_ann, self.vis_image, self.lang_ann, self.lang_text = self._build_file_indices_vis_lang(self.abs_datasets_dir)
+            self.episode_lookup, self.vis_lang_lookup, self.vis_ann, self.vis_image_static, self.vis_image_gripper, self.lang_ann, self.lang_text = self._build_file_indices_vis_lang(self.abs_datasets_dir)
         else:
             self.episode_lookup = self._build_file_indices(self.abs_datasets_dir)
 
@@ -108,7 +108,8 @@ class DiskDataset(BaseDataset):
             episode_lookup: Mapping from training example index to episode (file) index.
             vis_lang_lookup: Mapping from training example to index of vision-language instruction.
             vis_ann: Vision embeddings.
-            vis_image: Images with drawn trajectories.
+            vis_image_static: Static images with drawn trajectories.
+            vis_image_gripper: Gripper images with drawn trajectories.
             lang_ann: Language embeddings.
             lang_text: Language instructions.
         """
@@ -131,7 +132,8 @@ class DiskDataset(BaseDataset):
 
         ep_start_end_ids = vis_lang_data["info"]["indx"]  # each of them are 64
         vis_ann = vis_lang_data["vision"]["emb"]  # length total number of annotations
-        vis_image = vis_lang_data["vision"]["ann"]  # length total number of annotations
+        vis_image_static = vis_lang_data["vision"]["ann"]["static"]  # length total number of annotations
+        vis_image_gripper = vis_lang_data["vision"]["ann"]["gripper"]  # length total number of annotations
         lang_ann = vis_lang_data["language"]["emb"]  # length total number of annotations
         lang_text = vis_lang_data["language"]["ann"]  # length total number of annotations
         vis_lang_lookup = []
@@ -146,7 +148,7 @@ class DiskDataset(BaseDataset):
                     episode_lookup.append(idx)
                 cnt += 1
 
-        return np.array(episode_lookup), vis_lang_lookup, vis_ann, vis_image, lang_ann, lang_text
+        return np.array(episode_lookup), vis_lang_lookup, vis_ann, vis_image_static, vis_image_gripper, lang_ann, lang_text
 
     def _build_file_indices(self, abs_datasets_dir: Path) -> np.ndarray:
         """
@@ -254,7 +256,8 @@ class ExtendedDiskDataset(DiskDataset):
                     episode[key] = stacked_data[:self.obs_seq_len, :]
 
         if self.with_vis_lang:
-            episode["vision_image"] = self.vis_image[self.vis_lang_lookup[idx]][np.newaxis, :]
+            episode["vis_image_static"] = self.vis_image_static[self.vis_lang_lookup[idx]][np.newaxis, :]
+            episode["vis_image_gripper"] = self.vis_image_gripper[self.vis_lang_lookup[idx]][np.newaxis, :]
             episode["language"] = self.lang_ann[self.vis_lang_lookup[idx]]
             episode["language_text"] = self.lang_text[self.vis_lang_lookup[idx]]
 

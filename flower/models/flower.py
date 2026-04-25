@@ -643,8 +643,8 @@ class FLOWERVLA(pl.LightningModule):
         device = self.device
         default_type = next(self.parameters()).dtype
 
-        primary_image = batch["vis_image"]
-        secondary_image = batch["rgb_obs"]["rgb_gripper"]
+        primary_image = batch["vis_image_static"]
+        secondary_image = batch["vis_image_gripper"]
         
         embed_tensor = torch.zeros(len(primary_image), 1, 1)
         action_type_tensor = torch.ones(len(primary_image), self.act_window_size, 7)
