@@ -8,7 +8,7 @@ defaults:
 root_data_dir: ${oc.env:TMPDIR}/data/task_ABC_D #/hkfs/work/workspace/scratch/uruox-itrap_flower_abc/data/task_ABC_D
 vis_lang_folder: ${oc.env:TMPDIR}/data/vis_lang_clip_resnet50 #/home/hk-project-p0024638/uruox/data/iTRAP-FLOWER/calvin_policy_dataset/vis_lang_clip_resnet50
 
-log_dir: /home/troth/code/hiwi/iTRAP/logs #${oc.env:TMPDIR}/logs
+log_dir: ${oc.env:TMPDIR}/logs #/home/troth/code/hiwi/iTRAP/logs
 slurm: false
 seed: 242
 device: 'cuda'

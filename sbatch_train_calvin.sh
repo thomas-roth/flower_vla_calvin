@@ -23,8 +23,8 @@ echo "Using TMPDIR: $TMPDIR"
 mkdir -p $TMPDIR/data $TMPDIR/logs
 
 # Load dataset into tmpdir & log progress to stdout
-(pv -f -w 90 -N "Extracting dataset" /hkfs/work/workspace/scratch/uruox-itrap_flower_abc/data/task_ABC_D.tar | tar -C $TMPDIR/data -xf -) 2>&1
-(pv -f -w 90 -N "Extracting dataset annotations" /home/hk-project-p0024638/uruox/data/iTRAP-FLOWER/calvin_policy_dataset/vis_lang_clip_resnet50.tar | tar -C $TMPDIR/data -xf -) 2>&1
+(pv -f -w 90 -N "Extracting dataset" /hkfs/work/workspace/scratch/uruox-itrap_flower_abc/data/calvin/task_ABC_D.tar | tar -C $TMPDIR/data -xf -) 2>&1
+(pv -f -w 90 -N "Extracting dataset annotations" /hkfs/work/workspace/scratch/uruox-itrap_flower_abc/data/flower/static_cam_only/vis_lang_clip_resnet50.tar | tar -C $TMPDIR/data -xf -) 2>&1
 
 # Activate the virtualenv / conda environment
 source /home/hk-project-p0024638/uruox/miniconda3/bin/activate itrap
