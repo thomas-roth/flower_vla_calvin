@@ -1,4 +1,4 @@
 [submodule "iTRAP/models/flower_vla_calvin"]
 	path = iTRAP/models/flower_vla_calvin
-	url = https://github.com/thomas-roth/flower_vla_calvin.git
+	url = git@github.com:thomas-roth/flower_vla_calvin.git
 	branch = itrap
